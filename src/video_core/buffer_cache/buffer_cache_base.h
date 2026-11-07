@@ -660,8 +660,21 @@ private:
         static constexpr u64 PokemonPokopia = 0x0400A3A01EE4C000ULL;
         static constexpr u64 Pragmata = 0x0400C76024710000ULL;
         const u64 program_id = Settings::GetCurrentProgramID();
-        return gpu_memory == nullptr || !gpu_memory->UsesNativeTiling() ||
-               program_id == PokemonPokopia || program_id == Pragmata;
+        if (gpu_memory == nullptr || !gpu_memory->UsesNativeTiling() ||
+            program_id == PokemonPokopia || program_id == Pragmata) {
+            return true;
+        }
+        // Other Switch 2 titles skip these downloads because the guest CPU's first read of a
+        // GPU-written page is caught instead: by a read trap (memory.cpp) or, with reactive
+        // flushing, by the read protection of every cached page. Read traps are off under NCE
+        // (ReadTrapsEnabled), so on NCE without reactive flushing nothing copied GPU-written
+        // buffers back, and the CPU read stale data where the GPU's results should have been:
+        // a black picture on NCE only, as Pokopia's sky was before it was listed above.
+        // Ocarina of Time keeps its own handling (preflush marks, see GetFlushArea).
+        static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
+        return program_id != OcarinaOfTime &&
+               Settings::values.cpu_backend.GetValue() == Settings::CpuBackend::Nce &&
+               !Settings::values.use_reactive_flushing.GetValue();
     }
 
     /// Whether a GPU write to this range is copied back at the next fence. Ranges the guest CPU

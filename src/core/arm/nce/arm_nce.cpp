@@ -263,6 +263,20 @@ bool ArmNce::HandleGuestAccessFault(GuestContext* guest_ctx, void* raw_info, voi
         return true;
     }
 
+    // The address is unmapped. Dynarmic reads zero and drops the write there; do the same when
+    // the interpreter knows the instruction. HandleFailedGuestFault only skips it, which leaves
+    // a load's destination register holding whatever it held before (e.g. a stale pointer the
+    // game then follows), where Dynarmic would have given it zero.
+    auto& host_ctx = static_cast<ucontext_t*>(raw_context)->uc_mcontext;
+    const bool is_prefetch_abort = host_ctx.pc == reinterpret_cast<u64>(info->si_addr);
+    if (!is_prefetch_abort) {
+        if (const auto next_pc = MatchAndExecuteOneInstruction(memory, &host_ctx,
+                                                               GetFloatingPointState(host_ctx))) {
+            host_ctx.pc = *next_pc;
+            return true;
+        }
+    }
+
     // We couldn't handle the access.
     return HandleFailedGuestFault(guest_ctx, raw_info, raw_context);
 }
