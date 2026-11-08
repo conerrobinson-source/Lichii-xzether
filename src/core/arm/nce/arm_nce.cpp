@@ -59,6 +59,38 @@ struct FaultTraceThread {
     u64 ctx_tpidrro{};
 };
 
+// True the first time an address is seen (up to 256 addresses), so each code window and object
+// is dumped once.
+bool FirstTimeSeen(u64 address) {
+    static std::array<std::atomic<u64>, 256> seen{};
+    for (auto& slot : seen) {
+        u64 current = slot.load(std::memory_order_relaxed);
+        if (current == address) {
+            return false;
+        }
+        if (current == 0 &&
+            slot.compare_exchange_strong(current, address, std::memory_order_relaxed)) {
+            return true;
+        }
+        if (current == address) {
+            return false;
+        }
+    }
+    return false;
+}
+
+void DumpWords(Core::Memory::Memory& memory, const char* what, u64 start, u32 count) {
+    for (u32 i = 0; i < count; i += 8) {
+        std::array<u32, 8> w{};
+        for (u32 j = 0; j < 8; ++j) {
+            const u64 address = start + (i + j) * 4;
+            w[j] = memory.IsValidVirtualAddressRange(address, 4) ? memory.Read32(address) : 0;
+        }
+        LOG_INFO(Core_ARM, "NCE dump {} {:#x}: {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+                 what, start + i * 4, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+    }
+}
+
 void TraceUnmappedAccess(Core::Memory::Memory& memory, const mcontext_t& ctx, u64 fault_addr,
                          const FaultTraceThread& thread) {
     static std::atomic<u64> count{};
@@ -96,6 +128,23 @@ void TraceUnmappedAccess(Core::Memory::Memory& memory, const mcontext_t& ctx, u6
              n, thread.id, thread.tls, thread.tpidr, thread.tpidrro, thread.ctx_tpidr,
              thread.ctx_tpidrro, code[0], code[1], code[2], code[3], code[4], code[5], code[6],
              code[7]);
+
+    // Once per address: the code before the pc and before each return address, and the objects
+    // in x0 and x19, so the function holding the null pointer can be disassembled from the log.
+    if (FirstTimeSeen(pc)) {
+        DumpWords(memory, "code-at-pc", pc - 0x200, 0x200 / 4 + 16);
+    }
+    for (const u64 frame : frames) {
+        if (frame != 0 && FirstTimeSeen(frame)) {
+            DumpWords(memory, "code-at-return", frame - 0x100, 0x100 / 4 + 8);
+        }
+    }
+    for (const u64 object : {static_cast<u64>(ctx.regs[0]), static_cast<u64>(ctx.regs[19])}) {
+        if (object != 0 && (object & 7) == 0 && memory.IsValidVirtualAddressRange(object, 0x80) &&
+            FirstTimeSeen(object)) {
+            DumpWords(memory, "object", object, 0x80 / 4);
+        }
+    }
 }
 
 fpsimd_context* GetFloatingPointState(mcontext_t& host_ctx) {

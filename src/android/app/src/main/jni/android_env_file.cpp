@@ -44,6 +44,7 @@ void SetTestBuildDefaults() {
         {"EDEN_NCE_FAULT_TRACE", "1"},
         {"EDEN_DKB_FRAME_TRACE", "1"},
         {"EDEN_NX2_GPU_PROFILE", "1"},
+        {"EDEN_NX2_PIPELINE_STATS", "1"},
     };
     for (const auto& [key, value] : Defaults) {
         if (std::getenv(key) == nullptr) {
