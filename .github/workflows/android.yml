@@ -21,6 +21,10 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: "true"
       CCACHE_MAXSIZE: 3G
+      # The s26-ultra branch compiles for Snapdragon Oryon CPUs (8 Elite, 8 Elite Gen 5) and keeps
+      # its own ccache, since its objects never match the generic build's.
+      BUILD_PRESET: ${{ github.ref == 'refs/heads/s26-ultra' && 'oryon' || 'custom' }}
+      CCACHE_KEY_PREFIX: ${{ github.ref == 'refs/heads/s26-ultra' && 'android-oryon-ccache-' || 'android-ccache-' }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -53,8 +57,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.ccache
-          key: android-ccache-${{ github.sha }}
-          restore-keys: android-ccache-
+          key: ${{ env.CCACHE_KEY_PREFIX }}${{ github.sha }}
+          restore-keys: ${{ env.CCACHE_KEY_PREFIX }}
 
       - name: Restore CPM downloads
         uses: actions/cache@v4
@@ -69,7 +73,7 @@ jobs:
           CPM_SOURCE_CACHE: ${{ github.workspace }}/.cache/cpm
         run: |
           chmod +x .ci/android/build.sh
-          .ci/android/build.sh -t standard -b Release
+          .ci/android/build.sh -t standard -b Release -DYUZU_BUILD_PRESET="$BUILD_PRESET"
 
       - name: ccache stats
         if: always()
@@ -106,4 +110,18 @@ jobs:
           prerelease: true
           make_latest: false
           body: Automatic test build from ${{ github.sha }}. Experimental.
+          files: artifacts/*.apk
+
+      - name: Publish Galaxy S26 Ultra build for phone download
+        if: github.ref == 'refs/heads/s26-ultra'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-s26-latest
+          target_commitish: ${{ github.sha }}
+          name: Lichii Android S26 Ultra build
+          prerelease: true
+          make_latest: false
+          body: >-
+            Build from ${{ github.sha }} compiled for Snapdragon Oryon CPUs (Galaxy S25 and S26 Ultra).
+            Other phones may not run it. Experimental.
           files: artifacts/*.apk
