@@ -464,6 +464,15 @@ bool GraphicsPipelineCacheKey::operator==(const GraphicsPipelineCacheKey& rhs) c
 }
 
 namespace {
+// Ocarina of Time's task/mesh draws stall Xclipse's GPU (Device::HasHangingMeshDraws): build its
+// task/mesh pipelines for the compute emulation, which draws them, instead of skipping them.
+bool ForceMeshEmulation(const Device& device) {
+    static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
+    return device.HasHangingMeshDraws() && Settings::GetCurrentProgramID() == OcarinaOfTime;
+}
+} // Anonymous namespace
+
+namespace {
 // NVIDIA's and AMD's drivers keep a disk cache of built pipelines of their own. Eden's copy on top
 // only kept every pipeline the title ever built in host memory (title 1: a 245 MB file, ~0.35 GB
 // of RAM for the session) and copied it whole at each save, which stalled frames; pipelines built
@@ -1873,7 +1882,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         // so the skipped pipeline's needs can be reported below.
         if ((env.ShaderStage() == Shader::Stage::Task ||
              env.ShaderStage() == Shader::Stage::Mesh) &&
-            !device.IsExtMeshShaderSupported()) {
+            (!device.IsExtMeshShaderSupported() || ForceMeshEmulation(device))) {
             static std::atomic<bool> logged{};
             if (!logged.exchange(true, std::memory_order_relaxed)) {
                 LOG_WARNING(Render_Vulkan,

@@ -622,7 +622,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
     // missing, the game keeps running. Ocarina of Time's task/mesh draws stalled the GPU on
     // Xclipse right after its intro. Other games keep their mesh draws.
     static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
-    if (mesh_draw && device.HasHangingMeshDraws() &&
+    if (mesh_draw && !emulated_mesh && device.HasHangingMeshDraws() &&
         Settings::GetCurrentProgramID() == OcarinaOfTime) {
         static bool logged{};
         if (!std::exchange(logged, true)) {
