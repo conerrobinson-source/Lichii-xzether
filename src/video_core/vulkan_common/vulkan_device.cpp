@@ -1978,6 +1978,18 @@ u64 Device::GetDeviceMemoryBudget() const {
         result = (std::min)(result, GetDeviceMemoryUsage() + available -
                                         (std::min)(available, Reserve));
     }
+    // Samsung's low-memory killer closes even the foreground game once less than 40% of swap is
+    // free and RAM runs short. Past half of it used, the GPU gives the difference back: RAM it
+    // frees keeps that much of the game's memory out of swap.
+    if (const u64 swap_total = SystemMemoryInfo("SwapTotal"); swap_total != 0) {
+        const u64 swap_free = SystemMemoryInfo("SwapFree");
+        if (swap_free < swap_total / 2) {
+            result -= (std::min)(result, swap_total / 2 - swap_free);
+        }
+    }
+    // The texture cache ignores budgets of 2 GiB or less (as bogus), which would keep its old,
+    // higher thresholds exactly when memory is shortest.
+    result = (std::max)(result, u64{2_GiB} + 256_MiB);
 #endif
     return result;
 }
