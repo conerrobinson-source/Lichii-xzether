@@ -557,6 +557,15 @@
         <item>2</item>
     </integer-array>
 
+    <string-array name="ootAntiAliasingNames">
+        <item>@string/oot_anti_aliasing_game</item>
+        <item>@string/oot_anti_aliasing_no_sharpening</item>
+    </string-array>
+    <integer-array name="ootAntiAliasingValues">
+        <item>0</item>
+        <item>1</item>
+    </integer-array>
+
     <string-array name="framesAheadNames">
         <item>@string/frames_ahead_auto</item>
         <item>@string/frames_ahead_off</item>

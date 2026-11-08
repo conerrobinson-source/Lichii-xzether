@@ -790,6 +790,15 @@ abstract class SettingsItem(
                 )
             )
             put(
+                SingleChoiceSetting(
+                    IntSetting.OOT_ANTI_ALIASING,
+                    titleId = R.string.oot_anti_aliasing,
+                    descriptionId = R.string.oot_anti_aliasing_description,
+                    choicesId = R.array.ootAntiAliasingNames,
+                    valuesId = R.array.ootAntiAliasingValues
+                )
+            )
+            put(
                 SwitchSetting(
                     BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS,
                     titleId = R.string.renderer_asynchronous_shaders,
