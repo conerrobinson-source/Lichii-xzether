@@ -39,19 +39,28 @@ static_assert(offsetof(NativeExecutionParameters, native_context) == TpidrEl0Nat
 static_assert(offsetof(NativeExecutionParameters, lock) == TpidrEl0Lock);
 static_assert(offsetof(NativeExecutionParameters, magic) == TpidrEl0TlsMagic);
 
-// Logs guest accesses to unmapped memory with the faulting pc and its frame-pointer call chain
-// (return addresses). Module bases are in the log (LoadModule lines). On by default in s26-ultra
-// test builds, whose tester can't edit env.txt; EDEN_NCE_FAULT_TRACE=0 turns it off.
-// TODO: default off before this reaches nx2.
+// EDEN_NCE_FAULT_TRACE=1 logs guest accesses to unmapped memory with the faulting pc, the code
+// around it, its frame-pointer call chain (return addresses) and the thread's TLS registers.
+// Module bases are in the log (LoadModule lines).
 bool FaultTraceEnabled() {
     static const bool enabled = [] {
         const char* value = std::getenv("EDEN_NCE_FAULT_TRACE");
-        return value == nullptr || value[0] == '\0' || value[0] != '0';
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
     }();
     return enabled;
 }
 
-void TraceUnmappedAccess(Core::Memory::Memory& memory, const mcontext_t& ctx, u64 fault_addr) {
+struct FaultTraceThread {
+    u64 id{};
+    u64 tls{};          ///< The thread's TLS region (what TPIDRRO_EL0 should read).
+    u64 tpidr{};        ///< NativeExecutionParameters, what patched MRS/MSR use while running.
+    u64 tpidrro{};
+    u64 ctx_tpidr{};    ///< The core's GuestContext copies.
+    u64 ctx_tpidrro{};
+};
+
+void TraceUnmappedAccess(Core::Memory::Memory& memory, const mcontext_t& ctx, u64 fault_addr,
+                         const FaultTraceThread& thread) {
     static std::atomic<u64> count{};
     const u64 n = count.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n > 64 && (n % 1024) != 0) {
@@ -75,6 +84,18 @@ void TraceUnmappedAccess(Core::Memory::Memory& memory, const mcontext_t& ctx, u6
              n, fault_addr, pc, inst, ctx.regs[30], ctx.sp, ctx.regs[0], ctx.regs[1], ctx.regs[2],
              ctx.regs[8], ctx.regs[19], ctx.regs[20], frames[0], frames[1], frames[2], frames[3],
              frames[4], frames[5], frames[6], frames[7]);
+    std::array<u32, 8> code{};
+    for (size_t i = 0; i < code.size(); ++i) {
+        const u64 address = pc - 24 + i * 4;
+        code[i] = memory.IsValidVirtualAddressRange(address, 4) ? memory.Read32(address) : 0;
+    }
+    LOG_INFO(Core_ARM,
+             "NCE unmapped access #{} thread={} tls={:#x} tpidr={:#x} tpidrro={:#x} "
+             "ctx_tpidr={:#x} ctx_tpidrro={:#x} code@pc-24 {:08x} {:08x} {:08x} {:08x} {:08x} "
+             "{:08x} [{:08x}] {:08x}",
+             n, thread.id, thread.tls, thread.tpidr, thread.tpidrro, thread.ctx_tpidr,
+             thread.ctx_tpidrro, code[0], code[1], code[2], code[3], code[4], code[5], code[6],
+             code[7]);
 }
 
 fpsimd_context* GetFloatingPointState(mcontext_t& host_ctx) {
@@ -309,7 +330,14 @@ bool ArmNce::HandleGuestAccessFault(GuestContext* guest_ctx, void* raw_info, voi
     // game then follows), where Dynarmic would have given it zero.
     auto& host_ctx = static_cast<ucontext_t*>(raw_context)->uc_mcontext;
     if (FaultTraceEnabled()) {
-        TraceUnmappedAccess(memory, host_ctx, reinterpret_cast<u64>(info->si_addr));
+        FaultTraceThread thread{};
+        if (auto* running = guest_ctx->parent->m_running_thread; running != nullptr) {
+            const auto& params = running->GetNativeExecutionParameters();
+            thread = {running->GetThreadId(), GetInteger(running->GetTlsAddress()),
+                      params.tpidr_el0,       params.tpidrro_el0,
+                      guest_ctx->tpidr_el0,   guest_ctx->tpidrro_el0};
+        }
+        TraceUnmappedAccess(memory, host_ctx, reinterpret_cast<u64>(info->si_addr), thread);
     }
     const bool is_prefetch_abort = host_ctx.pc == reinterpret_cast<u64>(info->si_addr);
     if (!is_prefetch_abort) {

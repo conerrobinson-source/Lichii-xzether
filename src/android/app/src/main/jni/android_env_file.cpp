@@ -37,14 +37,33 @@ std::string Trim(const std::string& s) {
     return s.substr(begin, end - begin + 1);
 }
 
+// s26-ultra test builds: diagnostics on without env.txt, which the tester can't reach.
+// env.txt still overrides each (KEY=0 turns it off). Do not merge to nx2.
+void SetTestBuildDefaults() {
+    constexpr const char* Defaults[][2] = {
+        {"EDEN_NCE_FAULT_TRACE", "1"},
+        {"EDEN_DKB_FRAME_TRACE", "1"},
+        {"EDEN_NX2_GPU_PROFILE", "1"},
+    };
+    for (const auto& [key, value] : Defaults) {
+        if (std::getenv(key) == nullptr) {
+            setenv(key, value, 0);
+            __android_log_print(ANDROID_LOG_WARN, "YuzuNative", "test build default: %s=%s", key,
+                                value);
+        }
+    }
+}
+
 __attribute__((constructor(101))) void LoadEnvFile() {
     const std::string package = PackageName();
     if (package.empty()) {
+        SetTestBuildDefaults();
         return;
     }
     const std::string path = "/storage/emulated/0/Android/data/" + package + "/files/env.txt";
     FILE* file = std::fopen(path.c_str(), "r");
     if (file == nullptr) {
+        SetTestBuildDefaults();
         return;
     }
     char buffer[1024];
@@ -64,6 +83,7 @@ __attribute__((constructor(101))) void LoadEnvFile() {
                             value.c_str());
     }
     std::fclose(file);
+    SetTestBuildDefaults();
 }
 
 } // namespace
