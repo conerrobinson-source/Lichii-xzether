@@ -582,16 +582,39 @@ struct Memory::Impl {
 
     /// Read traps replace reactive flushing's blanket read protection of every cached page: only
     /// pages the GPU writes are protected, and each one only until its first read
-    /// (EDEN_NX2_READ_TRAPS=0 turns them off). Under NCE every fault is taken as a write, so they
-    /// are not used there.
+    /// (EDEN_NX2_READ_TRAPS=0 turns them off). Under NCE the fault handler tells reads from writes
+    /// (ESR.WnR) and downloads on a read (HandleReadTrapNCE); EDEN_NX2_NCE_READ_TRAPS=0 turns them
+    /// off there only.
     bool ReadTrapsEnabled() const {
         static const bool disabled = [] {
             const char* value = std::getenv("EDEN_NX2_READ_TRAPS");
             return value != nullptr && value[0] == '0';
         }();
+        static const bool nce_disabled = [] {
+            const char* value = std::getenv("EDEN_NX2_NCE_READ_TRAPS");
+            return value != nullptr && value[0] == '0';
+        }();
         return !disabled && current_page_table->fastmem_arena &&
                !Settings::values.use_reactive_flushing.GetValue() &&
-               Settings::values.cpu_backend.GetValue() != Settings::CpuBackend::Nce;
+               !(nce_disabled &&
+                 Settings::values.cpu_backend.GetValue() == Settings::CpuBackend::Nce);
+    }
+
+    bool HandleReadTrapNCE(u64 vaddr) {
+        const u64 page = vaddr & ~YUZU_PAGEMASK;
+        if (!ReadTrapsEnabled() || !ReadTrapArmed(page, YUZU_PAGESIZE)) {
+            return false;
+        }
+        static std::atomic<u64> handled{};
+        if (const u64 count = handled.fetch_add(1, std::memory_order_relaxed);
+            count < 8 || (count & (count - 1)) == 0) {
+            LOG_INFO(HW_Memory, "NCE read trap #{} at {:#x}: downloading GPU data", count + 1,
+                     page);
+        }
+        HandleRasterizerDownload(page, YUZU_PAGESIZE);
+        // The download path lifts the trap; make sure the page reads again either way.
+        DisarmReadTraps(page, YUZU_PAGESIZE);
+        return true;
     }
 
     void RasterizerArmReadTraps(u64 vaddr, u64 size) {
@@ -1261,6 +1284,10 @@ bool Memory::HasGpuWrittenDataNCE(Common::ProcessAddress vaddr, size_t size) {
     u8* const ptr = impl->GetPointerImpl(
         GetInteger(vaddr), [] {}, [&] { rasterizer = true; });
     return rasterizer && ptr != nullptr && impl->HasGpuWrittenData(ptr, size);
+}
+
+bool Memory::HandleReadTrapNCE(Common::ProcessAddress vaddr) {
+    return impl->HandleReadTrapNCE(GetInteger(vaddr));
 }
 
 bool Memory::InvalidateSeparateHeap(void* fault_address) {

@@ -368,6 +368,11 @@ bool ArmNce::HandleGuestAccessFault(GuestContext* guest_ctx, void* raw_info, voi
                           GetInteger(addr))) {
         return true;
     }
+    // A read of a page the GPU wrote: hand the CPU the GPU's data instead of dropping it.
+    if (!IsWriteFault(static_cast<ucontext_t*>(raw_context)->uc_mcontext) &&
+        memory.HandleReadTrapNCE(addr)) {
+        return true;
+    }
     if (memory.InvalidateNCE(addr, Memory::YUZU_PAGESIZE)) {
         // We handled the access successfully and are returning to guest code.
         return true;

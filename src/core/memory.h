@@ -509,6 +509,10 @@ public:
     /// Whether a GPU-cached page holds GPU-written buffer data guest memory lacks (NCE faults).
     bool HasGpuWrittenDataNCE(Common::ProcessAddress vaddr, size_t size);
 
+    /// NCE read fault on a page the GPU wrote: downloads its GPU data and lifts the trap, as a
+    /// Dynarmic slow-path read does. False when no read trap is armed on that page.
+    bool HandleReadTrapNCE(Common::ProcessAddress vaddr);
+
     bool InvalidateSeparateHeap(void* fault_address);
 
 private:
