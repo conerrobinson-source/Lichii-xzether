@@ -4,9 +4,11 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cinttypes>
+#include <cstdlib>
 #include <memory>
 
 #include "common/logging.h"
@@ -36,6 +38,42 @@ using NativeExecutionParameters = Kernel::KThread::NativeExecutionParameters;
 static_assert(offsetof(NativeExecutionParameters, native_context) == TpidrEl0NativeContext);
 static_assert(offsetof(NativeExecutionParameters, lock) == TpidrEl0Lock);
 static_assert(offsetof(NativeExecutionParameters, magic) == TpidrEl0TlsMagic);
+
+// EDEN_NCE_FAULT_TRACE=1 logs guest accesses to unmapped memory with the faulting pc and its
+// frame-pointer call chain (return addresses). Module bases are in the log (LoadModule lines).
+bool FaultTraceEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NCE_FAULT_TRACE");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    return enabled;
+}
+
+void TraceUnmappedAccess(Core::Memory::Memory& memory, const mcontext_t& ctx, u64 fault_addr) {
+    static std::atomic<u64> count{};
+    const u64 n = count.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n > 64 && (n % 1024) != 0) {
+        return;
+    }
+    const u64 pc = ctx.pc;
+    const u32 inst = memory.IsValidVirtualAddressRange(pc, 4) ? memory.Read32(pc) : 0;
+    std::array<u64, 8> frames{};
+    u64 fp = ctx.regs[29];
+    for (auto& frame : frames) {
+        if (fp == 0 || (fp & 7) != 0 || !memory.IsValidVirtualAddressRange(fp, 16)) {
+            break;
+        }
+        frame = memory.Read64(fp + 8);
+        fp = memory.Read64(fp);
+    }
+    LOG_INFO(Core_ARM,
+             "NCE unmapped access #{} addr={:#x} pc={:#x} inst={:08x} lr={:#x} sp={:#x} "
+             "x0={:#x} x1={:#x} x2={:#x} x8={:#x} x19={:#x} x20={:#x} frames {:#x} {:#x} {:#x} "
+             "{:#x} {:#x} {:#x} {:#x} {:#x}",
+             n, fault_addr, pc, inst, ctx.regs[30], ctx.sp, ctx.regs[0], ctx.regs[1], ctx.regs[2],
+             ctx.regs[8], ctx.regs[19], ctx.regs[20], frames[0], frames[1], frames[2], frames[3],
+             frames[4], frames[5], frames[6], frames[7]);
+}
 
 fpsimd_context* GetFloatingPointState(mcontext_t& host_ctx) {
     _aarch64_ctx* header = reinterpret_cast<_aarch64_ctx*>(&host_ctx.__reserved);
@@ -268,6 +306,9 @@ bool ArmNce::HandleGuestAccessFault(GuestContext* guest_ctx, void* raw_info, voi
     // a load's destination register holding whatever it held before (e.g. a stale pointer the
     // game then follows), where Dynarmic would have given it zero.
     auto& host_ctx = static_cast<ucontext_t*>(raw_context)->uc_mcontext;
+    if (FaultTraceEnabled()) {
+        TraceUnmappedAccess(memory, host_ctx, reinterpret_cast<u64>(info->si_addr));
+    }
     const bool is_prefetch_abort = host_ctx.pc == reinterpret_cast<u64>(info->si_addr);
     if (!is_prefetch_abort) {
         if (const auto next_pc = MatchAndExecuteOneInstruction(memory, &host_ctx,
