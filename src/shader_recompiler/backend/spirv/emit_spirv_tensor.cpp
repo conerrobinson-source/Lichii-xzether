@@ -21,8 +21,10 @@ void DefineSoftwareMatrixFunctions(EmitContext& ctx, const IR::Program& program)
         if (!needed[variant]) continue;
         ctx.AddCapability(spv::Capability::GroupNonUniform);
         ctx.AddCapability(spv::Capability::GroupNonUniformShuffle);
-        if (!ctx.profile.SupportsSubgroupStage(program.stage) ||
-            ctx.profile.has_broken_spirv_subgroup_shuffle)
+        // has_broken_spirv_subgroup_shuffle (Qualcomm) is not checked here: SHFL keeps its
+        // broadcast fallback, but HMMA has none, so on the Qualcomm driver the whole pipeline
+        // was rejected and its pass never drew (Star Fox's title background on Adreno 840).
+        if (!ctx.profile.SupportsSubgroupStage(program.stage))
             throw NotImplementedException("Software HMMA requires subgroup shuffle support");
         const Id u32ty = ctx.U32[1], f32ty = ctx.F32[1];
         const auto imm = [&](u32 v) { return ctx.Const(v); };
