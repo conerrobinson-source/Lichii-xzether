@@ -157,8 +157,20 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         ticks_to_destroy = (std::max)(ticks_to_destroy, min_age);
         num_iterations = aggressive_mode ? 40 : (high_priority_mode ? 20 : 10);
     };
+    // GPU-written images this pass evicts, copied back to guest memory together after it: one GPU
+    // wait for all of them instead of one each (Ocarina of Time: ~35 waits, ~110 ms a second).
+    struct PendingDownload {
+        decltype(runtime.DownloadStagingBuffer(0)) map;
+        decltype(FullDownloadCopies(std::declval<const ImageInfo&>())) copies;
+        GPUVAddr gpu_addr;
+        ImageInfo info;
+        DAddr cpu_addr;
+        size_t guest_size_bytes;
+        bool sparse;
+    };
+    std::vector<PendingDownload> downloads;
     const auto Cleanup = [this, &num_iterations, &high_priority_mode, &aggressive_mode,
-                          &evict_old_costly, out_of_memory](ImageId image_id) {
+                          &evict_old_costly, &downloads, out_of_memory](ImageId image_id) {
         if (num_iterations == 0) {
             return true;
         }
@@ -174,12 +186,18 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         }
         if (must_download) {
             auto map = runtime.DownloadStagingBuffer(image.unswizzled_size_bytes);
-            const auto copies = FullDownloadCopies(image.info);
+            auto copies = FullDownloadCopies(image.info);
             image.DownloadMemory(map, copies);
-            runtime.Finish();
-            SwizzleImage(*gpu_memory, image.gpu_addr, image.info, copies, map.mapped_span, swizzle_data_buffer);
+            downloads.push_back(PendingDownload{
+                .map = map,
+                .copies = std::move(copies),
+                .gpu_addr = image.gpu_addr,
+                .info = image.info,
+                .cpu_addr = image.cpu_addr,
+                .guest_size_bytes = image.guest_size_bytes,
+                .sparse = True(image.flags & ImageFlagBits::Sparse),
+            });
             ++gc_download_deletes;
-            ClearStaleImage(image);
         } else {
             MarkStale(image); // before UntrackImage (see MarkStale)
         }
@@ -188,7 +206,8 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
         }
         ++(True(image.flags & ImageFlagBits::CostlyLoad) ? gc_costly_deletes : gc_deletes);
         UnregisterImage(image_id);
-        DeleteImage(image_id, image.scale_tick > frame_tick + 5);
+        // An image with a queued download must outlive the GPU's copy of it.
+        DeleteImage(image_id, !must_download && image.scale_tick > frame_tick + 5);
         if (out_of_memory) {
             return false;
         }
@@ -266,6 +285,21 @@ void TextureCache<P>::RunGarbageCollector(bool out_of_memory) {
     if (out_of_memory || total_used_memory >= critical_memory) {
         Configure(true);
         Collect();
+    }
+    if (downloads.empty()) {
+        return;
+    }
+    runtime.Finish();
+    for (const PendingDownload& download : downloads) {
+        SwizzleImage(*gpu_memory, download.gpu_addr, download.info, download.copies,
+                     download.map.mapped_span, swizzle_data_buffer);
+        if (stale_pages.Count() != 0) {
+            if (download.sparse) {
+                ClearStaleGpu(download.gpu_addr, download.guest_size_bytes);
+            } else {
+                ClearStale(download.cpu_addr, download.guest_size_bytes);
+            }
+        }
     }
 }
 
