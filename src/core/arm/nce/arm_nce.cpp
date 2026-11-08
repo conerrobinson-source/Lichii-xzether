@@ -39,12 +39,14 @@ static_assert(offsetof(NativeExecutionParameters, native_context) == TpidrEl0Nat
 static_assert(offsetof(NativeExecutionParameters, lock) == TpidrEl0Lock);
 static_assert(offsetof(NativeExecutionParameters, magic) == TpidrEl0TlsMagic);
 
-// EDEN_NCE_FAULT_TRACE=1 logs guest accesses to unmapped memory with the faulting pc and its
-// frame-pointer call chain (return addresses). Module bases are in the log (LoadModule lines).
+// Logs guest accesses to unmapped memory with the faulting pc and its frame-pointer call chain
+// (return addresses). Module bases are in the log (LoadModule lines). On by default in s26-ultra
+// test builds, whose tester can't edit env.txt; EDEN_NCE_FAULT_TRACE=0 turns it off.
+// TODO: default off before this reaches nx2.
 bool FaultTraceEnabled() {
     static const bool enabled = [] {
         const char* value = std::getenv("EDEN_NCE_FAULT_TRACE");
-        return value != nullptr && value[0] != '\0' && value[0] != '0';
+        return value == nullptr || value[0] == '\0' || value[0] != '0';
     }();
     return enabled;
 }
