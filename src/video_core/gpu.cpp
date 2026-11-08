@@ -266,7 +266,11 @@ struct GPU::Impl {
                     // As a read's flush does: marks the pages Preflushable where the buffer cache
                     // copies them back at fences, so the next fault here need not wait.
                     (void)rasterizer->GetFlushArea(addr, size);
-                    rasterizer->FlushRegion(addr, size, VideoCommon::CacheType::BufferCache);
+                    // Images too: TryCacheInvalidation also sends pages here that hold part of a
+                    // GPU-written image, which the invalidation would otherwise discard.
+                    rasterizer->FlushRegion(addr, size,
+                                            VideoCommon::CacheType::BufferCache |
+                                                VideoCommon::CacheType::TextureCache);
                     rasterizer->OnCacheInvalidation(addr, size);
                 });
                 gpu_thread.TickGPU(is_async);

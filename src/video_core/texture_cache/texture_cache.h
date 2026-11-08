@@ -1691,6 +1691,37 @@ bool TextureCache<P>::IsRegionGpuModified(DAddr addr, size_t size) {
 }
 
 template <class P>
+bool TextureCache<P>::HasGpuModifiedImagePartlyIn(DAddr addr, size_t size) {
+    // NCE reports a write fault for its whole page. Star Fox keeps CPU data in the bytes before
+    // its colour-grading LUTs (3D images starting 0x200 and 0x600 into a page): each write there
+    // invalidated the LUT the GPU had written, and the re-upload from guest memory, which never
+    // held it, left the picture black. Dynarmic reports the bytes written, which miss the image.
+    const DAddr end = addr + size;
+    bool found = false;
+    ForEachImageInRegion(addr, size, [&](ImageId, ImageBase& image) {
+        if (False(image.flags & ImageFlagBits::GpuModified) || !IsDownloadable(image)) {
+            return false;
+        }
+        if (image.cpu_addr <= addr && end <= image.cpu_addr_end) {
+            return false;
+        }
+        static std::atomic<u64> count{};
+        if (const u64 n = count.fetch_add(1, std::memory_order_relaxed) + 1;
+            n <= 8 || (n & 0x3ff) == 0) {
+            LOG_INFO(HW_GPU,
+                     "Write to {:#x}+{:#x} partly over GPU-written image {:#x} ({}x{}x{}, format {}, "
+                     "{:#x} bytes): downloading it first ({} times)",
+                     addr, size, image.gpu_addr, image.info.size.width, image.info.size.height,
+                     image.info.size.depth, static_cast<u32>(image.info.format),
+                     image.guest_size_bytes, n);
+        }
+        found = true;
+        return true;
+    });
+    return found;
+}
+
+template <class P>
 std::pair<typename TextureCache<P>::Image*, BufferImageCopy> TextureCache<P>::DmaBufferImageCopy(
     const Tegra::DMA::ImageCopy& copy_info, const Tegra::DMA::BufferOperand& buffer_operand,
     const Tegra::DMA::ImageOperand& image_operand, ImageId image_id, bool modifies_image) {

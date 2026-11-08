@@ -2183,6 +2183,9 @@ bool RasterizerVulkan::TryCacheInvalidation(DAddr addr, u64 size) {
         const DAddr page_begin = Common::AlignDown(addr, Core::DEVICE_PAGESIZE);
         const DAddr page_end = Common::AlignUp(addr + size, Core::DEVICE_PAGESIZE);
         if (buffer_cache.IsRegionGpuModified(page_begin, page_end - page_begin)) return false;
+        // Likewise an image the GPU wrote that the write only partly covers: the fallback
+        // downloads it before invalidating, so its re-upload keeps the GPU's data.
+        if (texture_cache.HasGpuModifiedImagePartlyIn(addr, size)) return false;
         texture_cache.WriteMemory(addr, size);
         buffer_cache.WriteMemory(addr, size);
     }

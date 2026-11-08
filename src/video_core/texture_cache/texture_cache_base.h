@@ -343,6 +343,11 @@ public:
     /// Return true when a CPU region is modified from the GPU
     [[nodiscard]] bool IsRegionGpuModified(DAddr addr, size_t size);
 
+    /// Return true when a GPU-written image overlaps the region without containing all of it: a
+    /// write reported for the whole region may have landed outside the image, and invalidating
+    /// the image would replace what the GPU wrote with stale guest memory.
+    [[nodiscard]] bool HasGpuModifiedImagePartlyIn(DAddr addr, size_t size);
+
     [[nodiscard]] bool IsRescaling() const noexcept;
 
     [[nodiscard]] bool IsRescaling(const ImageViewBase& image_view) const noexcept;
