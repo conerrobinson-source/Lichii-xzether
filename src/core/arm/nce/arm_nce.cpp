@@ -422,7 +422,14 @@ void ArmNce::LockThread(Kernel::KThread* thread) {
 void ArmNce::UnlockThread(Kernel::KThread* thread) {
     auto* thread_params = &thread->GetNativeExecutionParameters();
     m_guest_ctx.tpidr_el0 = thread_params->tpidr_el0;
-    m_guest_ctx.tpidrro_el0 = thread_params->tpidrro_el0;
+    // A thread's TLS pointer is never 0: a zero here is the parameters of a thread that has not
+    // run yet (RunThread returned before publishing the context). Keep what LoadContext set.
+    if (thread_params->tpidrro_el0 != 0) {
+        m_guest_ctx.tpidrro_el0 = thread_params->tpidrro_el0;
+    } else if (static std::atomic<u32> logged{}; logged.fetch_add(1) < 4) {
+        LOG_WARNING(Core_ARM, "NCE: thread {} unlocked with no TLS pointer; keeping {:#x}",
+                    thread->GetThreadId(), m_guest_ctx.tpidrro_el0);
+    }
     thread_params->native_context = nullptr;
     UnlockThreadParameters(thread_params);
 }
@@ -432,6 +439,13 @@ HaltReason ArmNce::RunThread(Kernel::KThread* thread) {
     // If we are, we can just return immediately.
     HaltReason hr = static_cast<HaltReason>(m_guest_ctx.esr_el1.exchange(0));
     if (True(hr)) {
+        // UnlockThread copies the thread's parameters back into the context. Publish the context
+        // first: a new thread's parameters are zero, and copying them back dropped the TLS
+        // pointer LoadContext had just set, so the thread later ran with TPIDRRO_EL0 = 0 and its
+        // first TLS store went to 0x1f8 (Star Fox and Ocarina of Time on NCE, intermittently).
+        auto* thread_params = &thread->GetNativeExecutionParameters();
+        thread_params->tpidr_el0 = m_guest_ctx.tpidr_el0;
+        thread_params->tpidrro_el0 = m_guest_ctx.tpidrro_el0;
         return hr;
     }
 
