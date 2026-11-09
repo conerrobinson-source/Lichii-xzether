@@ -322,7 +322,6 @@
     <color name="yuzu_onTertiary_gray">#FFFFFF</color>
 
     <!-- Hokkaido main screen title (HokkaidoTitleView) -->
-    <color name="hokkaido_title_outline">#FFFFFF</color>
     <color name="hokkaido_title_top">#F7A24A</color>
     <color name="hokkaido_title_bottom">#D24F15</color>
     <color name="hokkaido_progress_track">#33A68A3C</color>

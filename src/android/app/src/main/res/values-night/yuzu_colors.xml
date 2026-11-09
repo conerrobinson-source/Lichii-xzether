@@ -295,7 +295,6 @@
     <color name="yuzu_scrim">#000000</color>
 
     <!-- Hokkaido main screen title (HokkaidoTitleView) -->
-    <color name="hokkaido_title_outline">#FFF8EE</color>
     <color name="hokkaido_title_top">#FFB45E</color>
     <color name="hokkaido_title_bottom">#E0601F</color>
     <color name="hokkaido_progress_track">#33E9DFA6</color>
