@@ -124,16 +124,19 @@ constexpr std::array<u8, 4> POLL_RESCAN_BRANCH{0x68, 0x2E, 0x01, 0x36};  // tbz 
 constexpr std::array<u8, 4> POLL_BACKOFF_SVC{0x61, 0x1E, 0x00, 0xD4};    // svc #0xf3
 constexpr std::array<u8, 4> POLL_BACKOFF_RETURN{0x0D, 0xE2, 0xFF, 0x17}; // b 0xf8c0
 constexpr std::array<u8, 4> POLL_RESCAN_ORIGINAL{0x28, 0x70, 0x05, 0x36}; // tbz w8, #0, 0xf8c0
+// The cave is zero padding between functions inside .text (so not the module's trailing
+// executable padding); check the words are zero, as #641 does.
+constexpr std::array<u8, 4> POLL_CAVE_ORIGINAL{0, 0, 0, 0};
 constexpr std::array POLL_BACKOFF_RECORDS{
     BuiltinPatchRecord{.module_offset = 0x14ABC,
                        .bytes = POLL_RESCAN_BRANCH,
                        .original = POLL_RESCAN_ORIGINAL},
     BuiltinPatchRecord{.module_offset = 0x17088,
                        .bytes = POLL_BACKOFF_SVC,
-                       .executable_padding = true},
+                       .original = POLL_CAVE_ORIGINAL},
     BuiltinPatchRecord{.module_offset = 0x1708C,
                        .bytes = POLL_BACKOFF_RETURN,
-                       .executable_padding = true},
+                       .original = POLL_CAVE_ORIGINAL},
 };
 
 constexpr std::array BUILTIN_PATCHES{

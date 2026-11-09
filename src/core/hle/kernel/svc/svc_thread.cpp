@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <cstdlib>
@@ -340,7 +341,13 @@ Result SetThreadCoreMask(Core::System& system, Handle thread_handle, s32 core_id
         affinity_mask = FoldExtraCoreMask(affinity_mask);
         core_id = FoldExtraCoreId(core_id);
         if (WidenAffinity(GetCurrentProcess(system.Kernel()), affinity_mask)) {
-            affinity_mask = FoldExtraCoreMask(process_core_mask);
+            const u64 wide = FoldExtraCoreMask(process_core_mask);
+            static std::atomic<u32> logged{};
+            if (logged.fetch_add(1) < 8) {
+                LOG_INFO(Kernel_SVC, "OoT wide affinity: thread {:#x} mask {:#x} -> {:#x}",
+                         thread_handle, affinity_mask, wide);
+            }
+            affinity_mask = wide;
         }
 
         // Validate the core id.
