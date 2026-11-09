@@ -30,6 +30,7 @@
 
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 
+#include "common/android_memory_status.h"
 #include "common/assert.h"
 #include "common/dkb_frame_trace.h"
 #include "shader_recompiler/exception.h"
@@ -81,36 +82,6 @@
 #include "video_core/nx2_profile.h"
 
 namespace Vulkan {
-#ifdef __ANDROID__
-namespace {
-// "rss=A MiB swap=B MiB | avail=C MiB swap_free=D MiB" from /proc/self/status and /proc/meminfo.
-std::string AndroidMemoryStatus() {
-    // Line by line: /proc/self/status starts with "Name:\t<process>", which no number parse
-    // survives.
-    const auto field = [](const char* path, std::string_view name) -> u64 {
-        std::ifstream file{path};
-        std::string line;
-        while (std::getline(file, line)) {
-            if (!line.starts_with(name) || line.size() <= name.size() || line[name.size()] != ':') {
-                continue;
-            }
-            u64 kib{};
-            const auto* begin = line.data() + name.size() + 1;
-            const auto* end = line.data() + line.size();
-            while (begin < end && (*begin == ' ' || *begin == '\t')) {
-                ++begin;
-            }
-            std::from_chars(begin, end, kib);
-            return kib >> 10;
-        }
-        return 0;
-    };
-    return fmt::format("rss={} MiB swap={} MiB | avail={} MiB swap_free={} MiB",
-                       field("/proc/self/status", "VmRSS"), field("/proc/self/status", "VmSwap"),
-                       field("/proc/meminfo", "MemAvailable"), field("/proc/meminfo", "SwapFree"));
-}
-} // Anonymous namespace
-#endif
 
 using Maxwell = Tegra::Engines::Maxwell3D::Regs;
 using VideoCommon::ImageViewId;
@@ -3345,7 +3316,7 @@ void RasterizerVulkan::TickFrame() {
             // Where the process stands against the low-memory killer: its resident and swapped
             // memory, and what the phone has left (Ocarina of Time's scene loads end in
             // std::bad_alloc on an S26 Ultra; the log file loses its last seconds when killed).
-            LOG_INFO(Render_Vulkan, "DKB memory {}", AndroidMemoryStatus());
+            LOG_INFO(Render_Vulkan, "DKB memory {}", Common::AndroidMemoryStatus());
 #endif
             trace_capture_dropped = trace_failure_details = 0;
             trace_rate.next = now + std::chrono::seconds{1};

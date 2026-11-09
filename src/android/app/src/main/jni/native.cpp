@@ -7,7 +7,10 @@
 #define VMA_IMPLEMENTATION
 #include "video_core/vulkan_common/vma.h"
 
+#include <atomic>
 #include <codecvt>
+#include <cstdlib>
+#include <exception>
 #include <cstdio>
 #include <cstring>
 #include <locale>
@@ -29,6 +32,7 @@
 
 #include <android/api-level.h>
 #include <android/native_window_jni.h>
+#include <common/android_memory_status.h>
 #include <common/fs/fs.h>
 #include <core/file_sys/patch_manager.h>
 #include <core/file_sys/savedata_factory.h>
@@ -259,6 +263,28 @@ void EmulationSession::InitializeSystem(bool reload) {
         Common::Log::Initialize();
         Common::Log::SetColorConsoleBackendEnabled(true);
         Common::Log::Start();
+
+        // An exception nobody catches (a Vulkan out-of-memory result, std::bad_alloc) ended the
+        // process without a line in the log. Name it, and the memory it died with, first.
+        std::set_terminate([] {
+            static std::atomic_flag reported;
+            if (!reported.test_and_set()) {
+                std::string what = "no active exception";
+                if (const auto exception = std::current_exception()) {
+                    try {
+                        std::rethrow_exception(exception);
+                    } catch (const std::exception& e) {
+                        what = e.what();
+                    } catch (...) {
+                        what = "an exception not derived from std::exception";
+                    }
+                }
+                LOG_CRITICAL(Frontend, "std::terminate on thread {}: {} | {}", gettid(), what,
+                             Common::AndroidMemoryStatus());
+                Common::Log::Stop();
+            }
+            std::abort();
+        });
 
         m_input_subsystem.Initialize();
     }

@@ -24,6 +24,7 @@
 
 #include <fmt/format.h>
 
+#include "common/android_memory_status.h"
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/common_types.h"
@@ -322,6 +323,20 @@ VkResult MemoryAllocator::AllocateImage(const VkImageCreateInfo &ci, bool dedica
         }
         return result;
     }
+
+#ifdef __ANDROID__
+    // A scene load allocates gigabytes inside one frame, between the once-a-second "DKB memory"
+    // lines: Ocarina of Time died twice in such a burst on an S26 Ultra with no error logged.
+    // Where the phone stands at each large image tells a low-memory kill from a crash.
+    if (alloc_info.size >= (u64{48} << 20)) {
+        static std::atomic<u32> large_logged{};
+        if (large_logged.fetch_add(1, std::memory_order_relaxed) < 2000) {
+            LOG_INFO(Render_Vulkan, "Large image {} MiB ({}x{}x{} format {}): {}",
+                     alloc_info.size >> 20, ci.extent.width, ci.extent.height, ci.extent.depth,
+                     static_cast<u32>(ci.format), Common::AndroidMemoryStatus());
+        }
+    }
+#endif
 
     // EDEN_NX2_GPU_PROFILE: images with 8 MiB or more of device memory, as the driver sized them.
     static const bool profile = std::getenv("EDEN_NX2_GPU_PROFILE") != nullptr;

@@ -73,6 +73,7 @@ class YuzuApplication : Application() {
         NativeLibrary.logDeviceInfo()
         PowerStateUpdater.start()
         Log.logDeviceInfo()
+        Log.logLastExits(this)
         ControllerNavigationGlobalHook.install(this)
 
         createNotificationChannels()
