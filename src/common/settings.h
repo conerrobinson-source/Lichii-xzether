@@ -1049,7 +1049,15 @@ struct Values {
 
     // Miscellaneous
     Setting<std::string> log_filter{linkage, "*:Info", "log_filter", Category::Miscellaneous};
-    Setting<bool> log_flush_line{linkage, false, "flush_line", Category::Miscellaneous, Specialization::Default, true, true};
+    // s26-ultra test builds flush every line on Android: a kill (the low-memory killer, a driver
+    // crash) otherwise loses the log's last seconds, which hold the cause.
+    Setting<bool> log_flush_line{linkage,
+#ifdef __ANDROID__
+                                 true,
+#else
+                                 false,
+#endif
+                                 "flush_line", Category::Miscellaneous, Specialization::Default, true, true};
     Setting<bool> censor_username{linkage, true, "censor_username", Category::Miscellaneous};
     Setting<bool> first_launch{linkage, true, "first_launch", Category::Miscellaneous};
 

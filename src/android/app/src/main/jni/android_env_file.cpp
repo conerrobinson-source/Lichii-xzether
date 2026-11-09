@@ -48,6 +48,9 @@ void SetTestBuildDefaults() {
         {"EDEN_NCE_FAULT_TRACE", "1"},
         {"EDEN_DKB_FRAME_TRACE", "1"},
         {"EDEN_NX2_GPU_PROFILE", "1"},
+        // Into the log, flushed per line: the last BEGIN without an END names the shaders the
+        // driver crashed on (Ocarina of Time on the Qualcomm driver dies on a shader).
+        {"EDEN_NX2_PIPELINE_BUILD_TRACE", "log"},
     };
     for (const auto& [key, value] : Defaults) {
         if (std::getenv(key) == nullptr) {
