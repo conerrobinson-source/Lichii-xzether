@@ -45,6 +45,43 @@ enum class DrainSite : u32 {
     Count,
 };
 
+/// How semaphore acquires and the polls of suspended ones were decided, counted with
+/// EDEN_NX2_GPU_PROFILE or EDEN_NX2_ACQUIRE_VERIFY and logged every 10 s (GpuSplit::ReportAcquire).
+struct AcquireStats {
+    std::atomic<u64> passed{};    ///< Acquires and polls met without a drain
+    std::atomic<u64> by_queued{}; ///< Of passed: met by a release the back had not run yet
+    std::atomic<u64> latched{};   ///< Polls resumed by a release the back ran (no drain)
+    std::atomic<u64> drained{};   ///< Acquires and polls that drained the split
+    std::atomic<u64> drain_operation{}; ///< Of drained: an equal or mask acquire
+    std::atomic<u64> drain_settings{};  ///< ...the split or the accuracy settings ask for it
+    std::atomic<u64> drain_word{};      ///< ...the word is unmapped or on a GPU-written page
+    std::atomic<u64> drain_queued{};    ///< ...a queued release to it is unknown or doesn't meet it
+    std::atomic<u64> valve_drains{}; ///< Of drained: polls of an unmet acquire, once per 1 ms
+    std::atomic<u64> polls{};     ///< Polls that keep waiting without a drain
+    std::atomic<u64> acquire_polls{}; ///< Polls of suspended channels waiting on an acquire
+    std::atomic<u64> list_polls{};    ///< ...and on a command list copy the GPU writes
+    std::atomic<u64> early_publishes{}; ///< Publishes to a back that waits for work (Commit)
+    std::atomic<u64> settles{};   ///< Idle hooks asked of a back that ran everything (SettleIdleBack)
+    std::atomic<u64> back_waits{};      ///< The back ran out of work
+    std::atomic<u64> back_sleeps{};     ///< Of those: it went to sleep
+    std::atomic<u64> back_spin_ns{};    ///< How long it spun for more work before that
+    std::atomic<u64> mismatches{}; ///< VERIFY: passed, yet the word after a drain doesn't meet it
+    std::atomic<u64> unlanded{};   ///< VERIFY: met by a queued release not in memory after a drain
+    std::atomic<u64> late{};       ///< VERIFY: a poll kept waiting, yet a drain meets it
+};
+inline AcquireStats g_acquire_stats;
+/// Whether g_acquire_stats counts (EDEN_NX2_GPU_PROFILE or EDEN_NX2_ACQUIRE_VERIFY), as of the
+/// split's last start.
+inline bool g_acquire_counting{};
+/// EDEN_NX2_ACQUIRE_VERIFY=1: acquires decided without a drain drain anyway and compare.
+inline bool g_acquire_verify{};
+
+inline void Count(std::atomic<u64>& counter, u64 amount = 1) {
+    if (g_acquire_counting) {
+        counter.fetch_add(amount, std::memory_order_relaxed);
+    }
+}
+
 inline constexpr std::array<const char*, static_cast<size_t>(DrainSite::Count)> drain_site_names{
     "other",       "fetch drain",     "acquire",    "semaphore flush", "fence release",
     "list writers", "list sync",      "list flush", "macro dma read",  "macro dma flush",
@@ -179,6 +216,19 @@ public:
     /// idle hook, so the caller may use the Vulkan scheduler. Callers that only read guest memory
     /// (semaphore acquires) need the first part alone.
     void Drain(DrainSite site = DrainSite::Other, bool uses_scheduler = true);
+    /// The front has nothing to send while it polls suspended channels. A back that ran everything
+    /// runs its idle hook (the deferred submit) and sleeps now instead of spinning for more, as it
+    /// did when every poll drained (Drain asks for the hook), but without the wait.
+    void SettleIdleBack() {
+        if (hook_requested.load(std::memory_order_relaxed) || BackQuiet() ||
+            consumed.load(std::memory_order_acquire) != write_position) {
+            return;
+        }
+        Count(g_acquire_stats.settles);
+        RequestIdleHook();
+    }
+    /// Logs g_acquire_stats every 10 s (front, while they count).
+    void ReportAcquire();
 
     /// Compute or copy work was just sent: what can write GPU-written command lists.
     void NoteWriter() {
@@ -269,6 +319,8 @@ private:
     static constexpr size_t RingMask = RingWords - 1;
     static constexpr u32 MaxMultiWords = 8192;
     static constexpr size_t PublishEvery = 256;
+    /// Words a back waiting for work gets without a publish_every (Commit).
+    static constexpr size_t PublishAfterWait = 8;
 
     template <typename Func>
     static void CallThunk(const u64* payload) {
@@ -287,7 +339,16 @@ private:
     u64* ReserveSlow(size_t words);
     void Commit(size_t words) {
         write_position += words;
-        if (write_position - published_local >= publish_every) {
+        const u64 unpublished = write_position - published_local;
+        if (unpublished >= publish_every) {
+            Publish();
+            return;
+        }
+        // The back waits for work at the last position published (back_idle_at): it gets these
+        // words after a few, not after publish_every. A drain used to restart it like that.
+        if (unpublished >= PublishAfterWait &&
+            back_idle_at.load(std::memory_order_relaxed) == published_local) {
+            Count(g_acquire_stats.early_publishes);
             Publish();
         }
     }
@@ -377,6 +438,10 @@ private:
     /// The front sleeps in Backoff (#161: instead of yielding).
     alignas(128) std::atomic<bool> front_waiting{};
     std::atomic<u32> front_wake{};
+    /// The back's position when it last ran out of work, stored before it waits: while
+    /// it equals published_local, the back waits for the words the front holds (Commit). Port of
+    /// the publish part of 62db242b34 (jpkto, PR #805).
+    alignas(128) std::atomic<u64> back_idle_at{~u64{0}};
     std::jthread back_thread;
 };
 

@@ -60,8 +60,10 @@ DmaPusher::~DmaPusher() = default;
 
 bool DmaPusher::CanResumeAcquire() {
     if (pending_list_tick) {
+        VideoCommon::Count(VideoCommon::g_acquire_stats.list_polls);
         return rasterizer->IsGpuTickDone(*pending_list_tick);
     }
+    VideoCommon::Count(VideoCommon::g_acquire_stats.acquire_polls);
     return puller.CanResumeAcquire(*this);
 }
 
