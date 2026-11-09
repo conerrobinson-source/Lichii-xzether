@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 #include "common/common_types.h"
+#include "video_core/engines/fermi_2d.h"
 #include "video_core/textures/texture.h"
 
 namespace VideoCommon::FireEmblemUpscale {
@@ -116,6 +117,23 @@ inline bool ValidPair(const Tegra::Texture::TICEntry& input,
            input.format == TextureFormat::B10G11R11 && output.format == TextureFormat::B10G11R11 &&
            input.Address() != output.Address() && output.Width() > input.Width() &&
            output.Height() > input.Height();
+}
+
+// A 2D image descriptor as the blit surface the replacement passes read and write.
+inline Tegra::Engines::Fermi2D::Surface SurfaceFromImage(const Tegra::Texture::TICEntry& tic,
+                                                         Tegra::RenderTargetFormat format) {
+    Tegra::Engines::Fermi2D::Surface result{};
+    result.format = format;
+    result.linear = Tegra::Engines::Fermi2D::MemoryLayout::BlockLinear;
+    result.block_width.Assign(tic.block_width);
+    result.block_height.Assign(tic.block_height);
+    result.block_depth.Assign(tic.block_depth);
+    result.depth = 1;
+    result.width = tic.Width();
+    result.height = tic.Height();
+    result.addr_upper = static_cast<u32>(tic.Address() >> 32);
+    result.addr_lower = static_cast<u32>(tic.Address());
+    return result;
 }
 
 // A successful substitute dispatch, not a shader rejection. Never cache it as a failure.

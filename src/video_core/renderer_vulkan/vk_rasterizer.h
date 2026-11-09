@@ -97,6 +97,7 @@ public:
     void DrawTexture() override;
     void Clear(u32 layer_count) override;
     void DispatchCompute() override;
+    bool StandInForSoftwareHmma(const ComputePipeline& pipeline);
     void ResetCounter(VideoCommon::QueryType type) override;
     void Query(GPUVAddr gpu_addr, VideoCommon::QueryType type,
                VideoCommon::QueryPropertiesFlags flags, u32 payload, u32 subreport) override;

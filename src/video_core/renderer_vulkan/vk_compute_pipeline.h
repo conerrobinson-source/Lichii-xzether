@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <span>
 
 #include <boost/container/small_vector.hpp>
@@ -88,6 +89,23 @@ public:
         return sampled_images;
     }
 
+    /// A software-HMMA (tensor) dispatch that reads one RGBA8 colour image and writes one
+    /// RGBA16-float image of the same size: an upscaler network whose output can be stood in for.
+    struct NetworkImages {
+        u32 input_tic;
+        u32 output_tic;
+    };
+
+    /// Whether this shader lowers HMMA through subgroup shuffles (no cooperative matrix).
+    [[nodiscard]] bool IsSoftwareHmma() const noexcept {
+        return info.uses_subgroup_shuffles && !info.uses_cooperative_matrix;
+    }
+
+    /// The network's colour input and output of the last configured dispatch, when it has them.
+    [[nodiscard]] const std::optional<NetworkImages>& NetworkInputOutput() const noexcept {
+        return network_images;
+    }
+
     /// Advances the frame window of EDEN_NX2_UPSCALER_TRACE
     static void TickUpscalerTrace();
 
@@ -100,6 +118,9 @@ private:
     /// Builds the pipeline once, on whichever thread gets here first.
     void RunBuild();
 
+    void FindNetworkInputOutput(TextureCache& texture_cache,
+                                std::span<const VideoCommon::ImageViewInOut> views);
+
     const Device& device;
     vk::PipelineCache& pipeline_cache;
     GuestDescriptorQueue& guest_descriptor_queue;
@@ -109,6 +130,7 @@ private:
     u32 num_descriptor_entries{};
     boost::container::small_vector<VideoCommon::ImageViewId, 8> written_images;
     std::vector<SampledImage> sampled_images;
+    std::optional<NetworkImages> network_images;
 
     VideoCommon::ComputeUniformBufferSizes uniform_buffer_sizes{};
 

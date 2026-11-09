@@ -1373,20 +1373,7 @@ bool KeplerCompute::TryFireEmblemUpscale(bool allow_history) {
         jitter->width != input->Width() || jitter->height != input->Height()) {
         return false;
     }
-    const auto surface = [](const Texture::TICEntry& tic, Tegra::RenderTargetFormat format) {
-        Fermi2D::Surface result{};
-        result.format = format;
-        result.linear = Fermi2D::MemoryLayout::BlockLinear;
-        result.block_width.Assign(tic.block_width);
-        result.block_height.Assign(tic.block_height);
-        result.block_depth.Assign(tic.block_depth);
-        result.depth = 1;
-        result.width = tic.Width();
-        result.height = tic.Height();
-        result.addr_upper = static_cast<u32>(tic.Address() >> 32);
-        result.addr_lower = static_cast<u32>(tic.Address());
-        return result;
-    };
+    const auto surface = SurfaceFromImage;
     const auto input_format = dlss_chain.spatial_only ? Tegra::RenderTargetFormat::A8B8G8R8_SRGB
                                                      : Tegra::RenderTargetFormat::B10G11R11_FLOAT;
     const auto output_format = dlss_chain.spatial_only ? Tegra::RenderTargetFormat::R16G16B16A16_FLOAT

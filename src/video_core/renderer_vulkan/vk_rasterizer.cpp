@@ -21,6 +21,7 @@
 #include <fstream>
 #include <mutex>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <fmt/format.h>
@@ -42,6 +43,7 @@
 #include "video_core/indirect_reset.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/engines/kepler_compute.h"
+#include "video_core/fire_emblem_upscale.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/renderer_vulkan/blit_image.h"
@@ -1749,6 +1751,55 @@ void RasterizerVulkan::Clear(u32 layer_count) {
     }
 }
 
+// Software HMMA runs a game's upscaler network as one compute shader of ~115k instructions and
+// ~2000 barriers; on the Adreno 840 the Star Fox network takes about 580 ms per frame. Instead of
+// dispatching it, the spatial stand-in (the pass the Star Fox replacement already draws over the
+// network's output) writes the output from the colour input, and the network never runs.
+// EDEN_NX2_HMMA_BYPASS=0 keeps the native dispatch. The caller holds the texture cache mutex.
+bool RasterizerVulkan::StandInForSoftwareHmma(const ComputePipeline& pipeline) {
+    static const bool enabled = [] {
+        const char* const value = std::getenv("EDEN_NX2_HMMA_BYPASS");
+        return value == nullptr || (value[0] != '0' && std::string_view{value} != "off");
+    }();
+    const auto& images = pipeline.NetworkInputOutput();
+    if (!enabled || !images || !kepler_compute->IsNativeMode()) {
+        return false;
+    }
+    using namespace VideoCommon::FireEmblemUpscale;
+    using Tegra::Texture::ComponentType;
+    using Tegra::Texture::TextureFormat;
+    const auto input = kepler_compute->GetTICEntry(images->input_tic);
+    const auto output = kepler_compute->GetTICEntry(images->output_tic);
+    const bool srgb = input.srgb_conversion != 0;
+    bool done = false;
+    const bool valid = PlainImage(input) && PlainImage(output) &&
+                       input.format == TextureFormat::A8B8G8R8 &&
+                       input.r_type == ComponentType::UNORM &&
+                       output.format == TextureFormat::R16G16B16A16 &&
+                       output.r_type == ComponentType::FLOAT &&
+                       input.Address() != output.Address() &&
+                       input.Width() == output.Width() && input.Height() == output.Height();
+    if (valid) {
+        const auto src = SurfaceFromImage(input, srgb ? Tegra::RenderTargetFormat::A8B8G8R8_SRGB
+                                                      : Tegra::RenderTargetFormat::A8B8G8R8_UNORM);
+        const auto dst = SurfaceFromImage(output, Tegra::RenderTargetFormat::R16G16B16A16_FLOAT);
+        done = texture_cache.TemporalUpscale(dst, src, src, nullptr, {0.0f, 0.0f}, {0.0f, 0.0f},
+                                             false);
+    }
+    static std::unordered_map<u64, u32> logged;
+    if (logged[pipeline.ShaderHash()]++ < 4) {
+        LOG_INFO(Render_Vulkan,
+                 "HMMA network {:016x} stand-in {}: input={:#x} {}x{} srgb={} output={:#x} {}x{}",
+                 pipeline.ShaderHash(),
+                 done ? "applied; native dispatch skipped"
+                      : valid ? "refused by the texture cache; dispatching natively"
+                              : "contract mismatch; dispatching natively",
+                 input.Address(), input.Width(), input.Height(), srgb, output.Address(),
+                 output.Width(), output.Height());
+    }
+    return done;
+}
+
 void RasterizerVulkan::DispatchCompute() {
     VideoCommon::Nx2Profile::Scope profile_scope{VideoCommon::Nx2Profile::Zone::Compute};
     FlushWork();
@@ -1797,6 +1848,11 @@ void RasterizerVulkan::DispatchCompute() {
         }
         frame_dump.CaptureDispatch(pipeline->ShaderHash(), written);
     };
+    if (!indirect_address && !byte_addressed_shadow && !frame_dump.Capturing() &&
+        StandInForSoftwareHmma(*pipeline)) {
+        SubmitNx2ListCopies();
+        return;
+    }
     TracePendingCpuWrites(true, std::array{pipeline->ShaderHash()});
     if (frame_dump.CapturingSampled()) {
         boost::container::small_vector<FrameDump::Sampled, 16> sampled;

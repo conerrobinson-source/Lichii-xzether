@@ -10,6 +10,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <limits>
+#include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include <boost/container/small_vector.hpp>
@@ -376,6 +378,65 @@ bool ComputePipeline::CanReplaceOcarinaUpscale() const {
            std::ranges::none_of(info.storage_buffers_descriptors, &Shader::StorageBufferDescriptor::is_written);
 }
 
+// The colour input and output of a software-HMMA network: the sampled 2D RGBA8 texture and the
+// written 2D RGBA16-float image of the same size (Star Fox's upscaler contract; the other textures
+// are the network's weights). Logged once per shader, so a log shows the images of a network this
+// does not recognize.
+void ComputePipeline::FindNetworkInputOutput(
+    TextureCache& texture_cache, std::span<const VideoCommon::ImageViewInOut> views) {
+    static std::mutex logged_mutex;
+    static std::unordered_set<u64> logged;
+    const bool log = [&] {
+        std::scoped_lock lock{logged_mutex};
+        return logged.insert(shader_hash).second;
+    }();
+    const size_t first_texture = Shader::NumDescriptors(info.texture_buffer_descriptors) +
+                                 Shader::NumDescriptors(info.image_buffer_descriptors);
+    const size_t first_image = first_texture + Shader::NumDescriptors(info.texture_descriptors);
+    const auto describe = [&](size_t index) {
+        const auto& view{texture_cache.GetImageView(views[index].id)};
+        return fmt::format("tic={} {}x{} fmt={} type={}", views[index].index, view.size.width,
+                           view.size.height, static_cast<u32>(view.format),
+                           static_cast<u32>(view.type));
+    };
+    std::optional<size_t> input;
+    for (size_t index = first_texture; index < first_image; ++index) {
+        const auto& view{texture_cache.GetImageView(views[index].id)};
+        if (log) {
+            LOG_INFO(Render_Vulkan, "HMMA network {:016x} samples {}", shader_hash, describe(index));
+        }
+        if (!input && view.type == VideoCommon::ImageViewType::e2D &&
+            (view.format == PixelFormat::A8B8G8R8_SRGB ||
+             view.format == PixelFormat::A8B8G8R8_UNORM)) {
+            input = index;
+        }
+    }
+    size_t index{first_image};
+    for (const auto& desc : info.image_descriptors) {
+        for (u32 i = 0; i < desc.count; ++i, ++index) {
+            const auto& view{texture_cache.GetImageView(views[index].id)};
+            if (log) {
+                LOG_INFO(Render_Vulkan, "HMMA network {:016x} {} image {}", shader_hash,
+                         desc.is_written ? "writes" : "reads", describe(index));
+            }
+            if (network_images || !input || !desc.is_written || desc.is_read ||
+                view.type != VideoCommon::ImageViewType::e2D ||
+                view.format != PixelFormat::R16G16B16A16_FLOAT) {
+                continue;
+            }
+            const auto& input_view{texture_cache.GetImageView(views[*input].id)};
+            if (view.size.width == input_view.size.width &&
+                view.size.height == input_view.size.height) {
+                network_images = NetworkImages{views[*input].index, views[index].index};
+            }
+        }
+    }
+    if (log) {
+        LOG_INFO(Render_Vulkan, "HMMA network {:016x}: colour input/output pair {}", shader_hash,
+                 network_images ? "found" : "not found");
+    }
+}
+
 bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                 Tegra::MemoryManager& gpu_memory, Scheduler& scheduler,
                                 BufferCache& buffer_cache, TextureCache& texture_cache,
@@ -481,6 +542,11 @@ bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
             TraceUpscalerDispatch(trace, info, shader_hash, kepler_compute, gpu_memory,
                                   buffer_cache, texture_cache, views);
         }
+    }
+
+    network_images.reset();
+    if (IsSoftwareHmma() && kepler_compute.IsNativeMode()) {
+        FindNetworkInputOutput(texture_cache, views);
     }
 
     if (RecordingSampledTextures() || deferred_bind) {

@@ -262,6 +262,9 @@ public:
     bool BypassOotNetwork(u64 program_id, u64 native_key);
     void TraceDlssContract(u64 native_key, bool warn_unvalidated = true);
 
+    /// Retrieves information about a specific TIC entry from the TIC buffer.
+    Texture::TICEntry GetTICEntry(u32 tic_index) const;
+
     /// GPU thread split with macros on its front half (gpu_split.h, EDEN_NX2_SPLIT=2), called by
     /// the front instead of CallMethod for native compute engines: runs their macros and macro
     /// uploads against a copy of the registers and sends the register writes to the back.
@@ -370,9 +373,6 @@ private:
     void ProcessLaunch();
 
     void ConsumeSinkImpl(Core::System& system) override;
-
-    /// Retrieves information about a specific TIC entry from the TIC buffer.
-    Texture::TICEntry GetTICEntry(u32 tic_index) const;
 
     /// Retrieves information about a specific TSC entry from the TSC buffer.
     Texture::TSCEntry GetTSCEntry(u32 tsc_index) const;
