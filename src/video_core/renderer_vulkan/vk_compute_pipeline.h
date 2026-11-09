@@ -22,6 +22,7 @@
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
 #include "video_core/renderer_vulkan/vk_descriptor_buffer.h"
 #include "video_core/renderer_vulkan/vk_descriptor_pool.h"
+#include "video_core/surface.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
@@ -94,6 +95,8 @@ public:
     struct NetworkImages {
         u32 input_tic;
         u32 output_tic;
+        VideoCore::Surface::PixelFormat input_format;
+        VideoCore::Surface::PixelFormat output_format;
     };
 
     /// Whether this shader lowers HMMA through subgroup shuffles (no cooperative matrix).

@@ -434,7 +434,8 @@ void ComputePipeline::FindNetworkInputOutput(
             const auto& input_view{texture_cache.GetImageView(views[*input].id)};
             if (view.size.width >= input_view.size.width &&
                 view.size.height >= input_view.size.height) {
-                network_images = NetworkImages{views[*input].index, views[index].index};
+                network_images = NetworkImages{views[*input].index, views[index].index,
+                                               input_view.format, view.format};
             }
         }
     }

@@ -1771,24 +1771,28 @@ bool RasterizerVulkan::StandInForSoftwareHmma(const ComputePipeline& pipeline) {
     using Tegra::Texture::TextureFormat;
     const auto input = kepler_compute->GetTICEntry(images->input_tic);
     const auto output = kepler_compute->GetTICEntry(images->output_tic);
-    // The render target format of a colour descriptor the network reads or writes.
-    const auto format = [](const Tegra::Texture::TICEntry& tic)
-        -> std::optional<Tegra::RenderTargetFormat> {
-        if (tic.format == TextureFormat::A8B8G8R8 && tic.r_type == ComponentType::UNORM) {
-            return tic.srgb_conversion != 0 ? Tegra::RenderTargetFormat::A8B8G8R8_SRGB
-                                            : Tegra::RenderTargetFormat::A8B8G8R8_UNORM;
-        }
-        if (tic.format == TextureFormat::R16G16B16A16 && tic.r_type == ComponentType::FLOAT) {
+    // The texture cache has already resolved both descriptors to 2D colour views of these formats.
+    using VideoCore::Surface::PixelFormat;
+    const auto format = [](PixelFormat pixel_format) -> std::optional<Tegra::RenderTargetFormat> {
+        switch (pixel_format) {
+        case PixelFormat::A8B8G8R8_SRGB:
+            return Tegra::RenderTargetFormat::A8B8G8R8_SRGB;
+        case PixelFormat::A8B8G8R8_UNORM:
+            return Tegra::RenderTargetFormat::A8B8G8R8_UNORM;
+        case PixelFormat::R16G16B16A16_FLOAT:
             return Tegra::RenderTargetFormat::R16G16B16A16_FLOAT;
-        }
-        if (tic.format == TextureFormat::B10G11R11 && tic.r_type == ComponentType::FLOAT) {
+        case PixelFormat::B10G11R11_FLOAT:
             return Tegra::RenderTargetFormat::B10G11R11_FLOAT;
+        default:
+            return std::nullopt;
         }
-        return std::nullopt;
     };
-    const auto input_format = format(input);
-    const auto output_format = format(output);
-    const bool valid = PlainImage(input) && PlainImage(output) && input_format && output_format &&
+    const auto blittable = [](const Tegra::Texture::TICEntry& tic) {
+        return tic.IsBlockLinear() && tic.Depth() == 1 && tic.Address() != 0;
+    };
+    const auto input_format = format(images->input_format);
+    const auto output_format = format(images->output_format);
+    const bool valid = blittable(input) && blittable(output) && input_format && output_format &&
                        input.Address() != output.Address() &&
                        input.Width() <= output.Width() && input.Height() <= output.Height();
     bool done = false;
@@ -1811,16 +1815,26 @@ bool RasterizerVulkan::StandInForSoftwareHmma(const ComputePipeline& pipeline) {
     }
     static std::unordered_map<u64, u32> logged;
     if (logged[pipeline.ShaderHash()]++ < 4) {
-        LOG_INFO(Render_Vulkan,
-                 "HMMA network {:016x} stand-in {}: input={:#x} {}x{} format {} output={:#x} "
-                 "{}x{} format {}",
+        const auto describe = [](const Tegra::Texture::TICEntry& tic, PixelFormat pixel_format) {
+            return fmt::format("{:#x} {}x{} depth {} layer {} mips {} type {} format {} types "
+                               "{}/{}/{}/{} srgb {} layout {} view {}",
+                               tic.Address(), tic.Width(), tic.Height(), tic.Depth(),
+                               tic.BaseLayer(), tic.max_mip_level.Value(),
+                               static_cast<u32>(tic.texture_type.Value()),
+                               static_cast<u32>(tic.format.Value()),
+                               static_cast<u32>(tic.r_type.Value()),
+                               static_cast<u32>(tic.g_type.Value()),
+                               static_cast<u32>(tic.b_type.Value()),
+                               static_cast<u32>(tic.a_type.Value()), tic.srgb_conversion.Value(),
+                               static_cast<u32>(tic.header_version.Value()),
+                               static_cast<u32>(pixel_format));
+        };
+        LOG_INFO(Render_Vulkan, "HMMA network {:016x} stand-in {}: input {} | output {}",
                  pipeline.ShaderHash(),
                  done ? "applied; native dispatch skipped"
                       : valid ? "refused by the texture cache; dispatching natively"
                               : "contract mismatch; dispatching natively",
-                 input.Address(), input.Width(), input.Height(),
-                 static_cast<u32>(input.format.Value()), output.Address(), output.Width(),
-                 output.Height(), static_cast<u32>(output.format.Value()));
+                 describe(input, images->input_format), describe(output, images->output_format));
     }
     return done;
 }
