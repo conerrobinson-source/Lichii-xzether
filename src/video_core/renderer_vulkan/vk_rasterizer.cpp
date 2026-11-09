@@ -18,6 +18,7 @@
 #include <tuple>
 #include <set>
 #include <span>
+#include <charconv>
 #include <fstream>
 #include <mutex>
 #include <string_view>
@@ -84,16 +85,23 @@ namespace Vulkan {
 namespace {
 // "rss=A MiB swap=B MiB | avail=C MiB swap_free=D MiB" from /proc/self/status and /proc/meminfo.
 std::string AndroidMemoryStatus() {
+    // Line by line: /proc/self/status starts with "Name:\t<process>", which no number parse
+    // survives.
     const auto field = [](const char* path, std::string_view name) -> u64 {
         std::ifstream file{path};
-        std::string key;
-        u64 kib{};
-        std::string rest;
-        while (file >> key >> kib) {
-            std::getline(file, rest);
-            if (key.size() == name.size() + 1 && key.starts_with(name) && key.back() == ':') {
-                return kib >> 10;
+        std::string line;
+        while (std::getline(file, line)) {
+            if (!line.starts_with(name) || line.size() <= name.size() || line[name.size()] != ':') {
+                continue;
             }
+            u64 kib{};
+            const auto* begin = line.data() + name.size() + 1;
+            const auto* end = line.data() + line.size();
+            while (begin < end && (*begin == ' ' || *begin == '\t')) {
+                ++begin;
+            }
+            std::from_chars(begin, end, kib);
+            return kib >> 10;
         }
         return 0;
     };
