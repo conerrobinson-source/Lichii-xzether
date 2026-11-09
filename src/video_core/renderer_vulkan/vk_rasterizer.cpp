@@ -80,6 +80,29 @@
 #include "video_core/nx2_profile.h"
 
 namespace Vulkan {
+#ifdef __ANDROID__
+namespace {
+// "rss=A MiB swap=B MiB | avail=C MiB swap_free=D MiB" from /proc/self/status and /proc/meminfo.
+std::string AndroidMemoryStatus() {
+    const auto field = [](const char* path, std::string_view name) -> u64 {
+        std::ifstream file{path};
+        std::string key;
+        u64 kib{};
+        std::string rest;
+        while (file >> key >> kib) {
+            std::getline(file, rest);
+            if (key.size() == name.size() + 1 && key.starts_with(name) && key.back() == ':') {
+                return kib >> 10;
+            }
+        }
+        return 0;
+    };
+    return fmt::format("rss={} MiB swap={} MiB | avail={} MiB swap_free={} MiB",
+                       field("/proc/self/status", "VmRSS"), field("/proc/self/status", "VmSwap"),
+                       field("/proc/meminfo", "MemAvailable"), field("/proc/meminfo", "SwapFree"));
+}
+} // Anonymous namespace
+#endif
 
 using Maxwell = Tegra::Engines::Maxwell3D::Regs;
 using VideoCommon::ImageViewId;
@@ -3297,6 +3320,12 @@ void RasterizerVulkan::TickFrame() {
                      static_cast<double>(trace_zero_direct) / trace_window_frames);
             trace_draws = trace_skipped = trace_indirect = trace_zero_direct = 0;
             trace_window_frames = 0;
+#ifdef __ANDROID__
+            // Where the process stands against the low-memory killer: its resident and swapped
+            // memory, and what the phone has left (Ocarina of Time's scene loads end in
+            // std::bad_alloc on an S26 Ultra; the log file loses its last seconds when killed).
+            LOG_INFO(Render_Vulkan, "DKB memory {}", AndroidMemoryStatus());
+#endif
             trace_capture_dropped = trace_failure_details = 0;
             trace_rate.next = now + std::chrono::seconds{1};
         }
