@@ -307,6 +307,11 @@ public:
     /// Decode images the GPU is done with, for the next texture of the same shape.
     std::vector<PendingTranscode> free_transcodes;
 
+    /// Full-size images of downscaled render targets (Image::FreeOriginalIfDownscaled), destroyed
+    /// once the GPU is past `first`.
+    std::deque<std::pair<u64, vk::Image>> deferred_image_frees;
+    void DeferImageFree(vk::Image image);
+
     std::optional<BlockLinearUnswizzle3DPass> bl3d_unswizzle_pass;
     const Settings::ResolutionScalingInfo& resolution;
     std::array<std::vector<VkFormat>, VideoCore::Surface::MaxPixelFormat> view_formats;
@@ -673,6 +678,11 @@ private:
 
     vk::Image original_image;
     vk::Image scaled_image;
+
+    /// A downscaled render target keeps only its scaled image: frees the full-size one after a
+    /// scale up, and makes it again (from the scaled contents) before a scale down.
+    void FreeOriginalIfDownscaled();
+    void RecreateOriginal();
 
     vk::Buffer compute_unswizzle_buffer;
     VkDeviceSize compute_unswizzle_buffer_size = 0;
