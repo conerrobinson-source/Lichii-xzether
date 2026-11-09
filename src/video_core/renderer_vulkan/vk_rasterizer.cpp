@@ -2760,7 +2760,20 @@ void RasterizerVulkan::WaitForIdle() {
 
     query_cache.NotifyWFI();
 
-    if (device.IsMoltenVK() && scheduler.IsRenderPassActive()) {
+    // On tilers, ending the render pass stores and reloads every attachment: Ocarina of Time's
+    // town scenes issue ~48 WFIs a frame between draws, which fragmented each frame into ~160
+    // render passes and took the GPU from 10 ms to 100 ms a frame on an Adreno 840. Treat a WFI
+    // inside a render pass like FragmentBarrier (MoltenVK already does): the pass breaks only if
+    // the next draw reads what this one wrote. EDEN_NX2_WFI_KEEPS_PASS=0 restores the barrier.
+    static const bool wfi_keeps_pass = [] {
+        const char* value = std::getenv("EDEN_NX2_WFI_KEEPS_PASS");
+#ifdef ANDROID
+        return value == nullptr || value[0] != '0';
+#else
+        return value != nullptr && value[0] == '1';
+#endif
+    }();
+    if ((device.IsMoltenVK() || wfi_keeps_pass) && scheduler.IsRenderPassActive()) {
         scheduler.DeferFragmentBarrier();
         fence_manager.SignalOrdering();
         return;

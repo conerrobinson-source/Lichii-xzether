@@ -1384,10 +1384,14 @@ std::pair<s32, Errno> BSD_USA::SocketImpl(Domain domain, Type type, Protocol pro
     UNIMPLEMENTED_IF_MSG(unk_flag, "Unknown flag in type");
     type = static_cast<Type>(static_cast<u32>(type) & ~0x20000000);
 
-    // Checked before taking an fd. A joined room does not lift it: room TCP is only stubbed.
+    // Airplane mode fails at connect(), not socket(): a console with no network still hands out
+    // sockets, and Star Fox left its network object null when socket() returned -1 here (a null
+    // write ~120 times a second for the rest of the run and shredded geometry).
     if (Settings::values.airplane_mode.GetValue() && IsConnectionBased(type)) {
-        LOG_ERROR(Service, "Airplane mode is enabled, cannot create socket");
-        return {-1, Errno::NOTCONN};
+        static std::atomic<u32> logged{};
+        if (logged.fetch_add(1) < 4) {
+            LOG_INFO(Service, "Airplane mode: socket created, connections will fail");
+        }
     }
 
     std::shared_ptr<Network::SocketBase> socket;
@@ -1769,6 +1773,11 @@ Errno BSD_USA::ConnectImpl(s32 fd, std::span<const u8> addr) {
     }
 
     ASSERT(addr.size() >= 16);
+
+    if (Settings::values.airplane_mode.GetValue()) {
+        LOG_DEBUG(Service, "Airplane mode: connect on fd={} refused", fd);
+        return Errno::CONNREFUSED;
+    }
 
     auto addr_in = GetValue<SockAddrIn>(addr);
 
