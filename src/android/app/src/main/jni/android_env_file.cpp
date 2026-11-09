@@ -39,12 +39,12 @@ std::string Trim(const std::string& s) {
 
 // s26-ultra test builds: diagnostics on without env.txt, which the tester can't reach.
 // env.txt still overrides each (KEY=0 turns it off). Do not merge to nx2.
+// The frame trace, GPU profile and pipeline statistics (per-draw timestamp queries, driver
+// statistics for every pipeline, ~800 log lines a second) are off again now that the Star Fox
+// title-screen investigation is done; KEY=1 in env.txt turns one back on.
 void SetTestBuildDefaults() {
     constexpr const char* Defaults[][2] = {
         {"EDEN_NCE_FAULT_TRACE", "1"},
-        {"EDEN_DKB_FRAME_TRACE", "1"},
-        {"EDEN_NX2_GPU_PROFILE", "1"},
-        {"EDEN_NX2_PIPELINE_STATS", "1"},
     };
     for (const auto& [key, value] : Defaults) {
         if (std::getenv(key) == nullptr) {
