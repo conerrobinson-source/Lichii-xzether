@@ -236,6 +236,18 @@ bool CurrentProgramIsSwitch2() {
     return current_program_is_switch2;
 }
 
+bool SceneMemoryCapEnabled() {
+    switch (values.scene_memory_cap.GetValue()) {
+    case SceneMemoryCap::On:
+        return true;
+    case SceneMemoryCap::Off:
+        return false;
+    default:
+        // Ocarina of Time loads a scene's textures in one frame.
+        return current_program_id == 0x0400486024DEC000ULL;
+    }
+}
+
 static std::optional<AstcRecompression> astc_recompression_override;
 
 AstcRecompression GetAstcRecompression() {

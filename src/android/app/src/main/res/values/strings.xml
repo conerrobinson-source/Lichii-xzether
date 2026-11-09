@@ -1148,6 +1148,8 @@
     <string name="frames_ahead_auto">Auto</string>
     <string name="frames_ahead_off">Off</string>
     <string name="frames_ahead_on">On</string>
+    <string name="scene_memory_cap">Limit memory during scene loads</string>
+    <string name="scene_memory_cap_description">Keeps at most 256 MB of upload buffers while a scene loads and frees large ones every frame. Helps games that get closed for low memory, but slows games that stream textures. Auto: Ocarina of Time only.</string>
 
     <!-- ASTC Decoding Method Choices -->
     <string name="accelerate_astc_cpu" translatable="false">CPU</string>

@@ -44,14 +44,14 @@ Other phones may work, but this is the only device the fork is tested on so far.
 
 | Game | Status |
 |---|---|
-| The Legend of Zelda: Ocarina of Time (Switch 2) | Boots. The title screen and the pre-rendered intro movies run at 60 FPS. **It currently hangs while loading the first gameplay scene after the intro** (being worked on). |
+| The Legend of Zelda: Ocarina of Time (Switch 2) | Playable. Use 0.5x resolution; 16 GB of RAM recommended. |
 
 Only results tested on the phone above are listed here.
 
 ### What's different from upstream
 
 - AV1 movies are decoded with Android's hardware decoder (MediaCodec).
-- Ocarina of Time's movies skip the game's movie-enhancement neural network (which needs NVIDIA tensor cores), so they play at full speed instead of about 8 FPS.
+- Ocarina of Time's movies skip the game's movie-enhancement neural network (which needs NVIDIA tensor cores), and show the movie frame directly.
 - Emulated tensor-core math (HMMA) is about twice as fast on RADV.
 - `EDEN_*` diagnostic switches can be set on Android with an `env.txt` file (see below).
 

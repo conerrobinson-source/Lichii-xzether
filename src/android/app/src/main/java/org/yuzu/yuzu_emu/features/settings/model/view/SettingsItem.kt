@@ -781,6 +781,15 @@ abstract class SettingsItem(
                 )
             )
             put(
+                SingleChoiceSetting(
+                    IntSetting.SCENE_MEMORY_CAP,
+                    titleId = R.string.scene_memory_cap,
+                    descriptionId = R.string.scene_memory_cap_description,
+                    choicesId = R.array.framesAheadNames,
+                    valuesId = R.array.framesAheadValues
+                )
+            )
+            put(
                 SwitchSetting(
                     BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS,
                     titleId = R.string.renderer_asynchronous_shaders,

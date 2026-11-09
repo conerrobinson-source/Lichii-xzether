@@ -385,17 +385,12 @@ private:
         rb.Push(result);
     }
 
-    // Input streams (microphone) drop captured frames, output streams drop queued playback frames.
+    /// Discard requested frames and return only the count actually purged.
     void PurgeStream(HLERequestContext& ctx) {
         IPC::RequestParser rp{ctx};
+        const auto frames = rp.Pop<u32>();
         u32 purged{};
-        Result result{ResultSuccess};
-        if (stream->IsInput()) {
-            result = stream->Purge(rp.Pop<u32>(), purged);
-        } else {
-            result = stream->Purge(rp.Pop<s32>(), purged);
-        }
-        LOG_INFO(Service_Audio, "stream {} purge: purged {}, result {:#x}", id, purged, result.raw);
+        const auto result = stream->Purge(frames, purged);
         IPC::ResponseBuilder rb{ctx, 3};
         rb.Push(result);
         rb.Push(purged);

@@ -139,10 +139,13 @@ ENUM(GpuAccuracy, Low, High);
 ENUM(DmaAccuracy, Default, Unsafe, Safe);
 ENUM(GpuFenceBehavior, Default, Immediate, Balanced, Accurate);
 ENUM(FramesAhead, Auto, Off, On);
+ENUM(SceneMemoryCap, Auto, Off, On);
+ENUM(NativeComputeWriteMark, Auto, Full);
 ENUM(CpuBackend, Dynarmic, Nce);
 ENUM(CpuAccuracy, Auto, Accurate, Unsafe, Paranoid, Debugging);
 ENUM(CpuClock, Normal, Boost, Overclock)
 ENUM(NativeAsyncDraws, Wait, Bounded, Skip);
+ENUM(PrecacheShaders, Off, Ask, Always);
 ENUM(MemoryLayout, Memory_4Gb, Memory_6Gb, Memory_8Gb, Memory_10Gb, Memory_12Gb);
 ENUM(ConfirmStop, Ask_Always, Ask_Based_On_Game, Ask_Never);
 ENUM(FullscreenMode, Borderless, Exclusive);
