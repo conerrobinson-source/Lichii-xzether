@@ -1752,10 +1752,11 @@ void RasterizerVulkan::Clear(u32 layer_count) {
 }
 
 // Software HMMA runs a game's upscaler network as one compute shader of ~115k instructions and
-// ~2000 barriers; on the Adreno 840 the Star Fox network takes about 580 ms per frame. Instead of
-// dispatching it, the spatial stand-in (the pass the Star Fox replacement already draws over the
-// network's output) writes the output from the colour input, and the network never runs.
-// EDEN_NX2_HMMA_BYPASS=0 keeps the native dispatch. The caller holds the texture cache mutex.
+// ~2000 barriers; on the Adreno 840 the Star Fox network takes about 600 ms per frame. Instead of
+// dispatching it, its output is a bilinear blit of its colour input (Star Fox: 1600x900
+// RGBA16-float to 1920x1080 RGBA8 sRGB), and the network never runs. Its other outputs are not
+// written. EDEN_NX2_HMMA_BYPASS=0 keeps the native dispatch. The caller holds the texture cache
+// mutex.
 bool RasterizerVulkan::StandInForSoftwareHmma(const ComputePipeline& pipeline) {
     static const bool enabled = [] {
         const char* const value = std::getenv("EDEN_NX2_HMMA_BYPASS");
@@ -1770,32 +1771,56 @@ bool RasterizerVulkan::StandInForSoftwareHmma(const ComputePipeline& pipeline) {
     using Tegra::Texture::TextureFormat;
     const auto input = kepler_compute->GetTICEntry(images->input_tic);
     const auto output = kepler_compute->GetTICEntry(images->output_tic);
-    const bool srgb = input.srgb_conversion != 0;
-    bool done = false;
-    const bool valid = PlainImage(input) && PlainImage(output) &&
-                       input.format == TextureFormat::A8B8G8R8 &&
-                       input.r_type == ComponentType::UNORM &&
-                       output.format == TextureFormat::R16G16B16A16 &&
-                       output.r_type == ComponentType::FLOAT &&
+    // The render target format of a colour descriptor the network reads or writes.
+    const auto format = [](const Tegra::Texture::TICEntry& tic)
+        -> std::optional<Tegra::RenderTargetFormat> {
+        if (tic.format == TextureFormat::A8B8G8R8 && tic.r_type == ComponentType::UNORM) {
+            return tic.srgb_conversion != 0 ? Tegra::RenderTargetFormat::A8B8G8R8_SRGB
+                                            : Tegra::RenderTargetFormat::A8B8G8R8_UNORM;
+        }
+        if (tic.format == TextureFormat::R16G16B16A16 && tic.r_type == ComponentType::FLOAT) {
+            return Tegra::RenderTargetFormat::R16G16B16A16_FLOAT;
+        }
+        if (tic.format == TextureFormat::B10G11R11 && tic.r_type == ComponentType::FLOAT) {
+            return Tegra::RenderTargetFormat::B10G11R11_FLOAT;
+        }
+        return std::nullopt;
+    };
+    const auto input_format = format(input);
+    const auto output_format = format(output);
+    const bool valid = PlainImage(input) && PlainImage(output) && input_format && output_format &&
                        input.Address() != output.Address() &&
-                       input.Width() == output.Width() && input.Height() == output.Height();
+                       input.Width() <= output.Width() && input.Height() <= output.Height();
+    bool done = false;
     if (valid) {
-        const auto src = SurfaceFromImage(input, srgb ? Tegra::RenderTargetFormat::A8B8G8R8_SRGB
-                                                      : Tegra::RenderTargetFormat::A8B8G8R8_UNORM);
-        const auto dst = SurfaceFromImage(output, Tegra::RenderTargetFormat::R16G16B16A16_FLOAT);
-        done = texture_cache.TemporalUpscale(dst, src, src, nullptr, {0.0f, 0.0f}, {0.0f, 0.0f},
-                                             false);
+        const Tegra::Engines::Fermi2D::Config copy{
+            .operation = Tegra::Engines::Fermi2D::Operation::SrcCopy,
+            .filter = Tegra::Engines::Fermi2D::Filter::Bilinear,
+            .must_accelerate = true,
+            .dst_x0 = 0,
+            .dst_y0 = 0,
+            .dst_x1 = static_cast<s32>(output.Width()),
+            .dst_y1 = static_cast<s32>(output.Height()),
+            .src_x0 = 0,
+            .src_y0 = 0,
+            .src_x1 = static_cast<s32>(input.Width()),
+            .src_y1 = static_cast<s32>(input.Height()),
+        };
+        done = texture_cache.BlitImage(SurfaceFromImage(output, *output_format),
+                                       SurfaceFromImage(input, *input_format), copy);
     }
     static std::unordered_map<u64, u32> logged;
     if (logged[pipeline.ShaderHash()]++ < 4) {
         LOG_INFO(Render_Vulkan,
-                 "HMMA network {:016x} stand-in {}: input={:#x} {}x{} srgb={} output={:#x} {}x{}",
+                 "HMMA network {:016x} stand-in {}: input={:#x} {}x{} format {} output={:#x} "
+                 "{}x{} format {}",
                  pipeline.ShaderHash(),
                  done ? "applied; native dispatch skipped"
                       : valid ? "refused by the texture cache; dispatching natively"
                               : "contract mismatch; dispatching natively",
-                 input.Address(), input.Width(), input.Height(), srgb, output.Address(),
-                 output.Width(), output.Height());
+                 input.Address(), input.Width(), input.Height(),
+                 static_cast<u32>(input.format.Value()), output.Address(), output.Width(),
+                 output.Height(), static_cast<u32>(output.format.Value()));
     }
     return done;
 }

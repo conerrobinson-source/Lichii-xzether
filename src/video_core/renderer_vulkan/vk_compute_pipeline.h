@@ -89,8 +89,8 @@ public:
         return sampled_images;
     }
 
-    /// A software-HMMA (tensor) dispatch that reads one RGBA8 colour image and writes one
-    /// RGBA16-float image of the same size: an upscaler network whose output can be stood in for.
+    /// A software-HMMA (tensor) dispatch that reads one colour image and writes one at least as
+    /// large: an upscaler network whose output can be stood in for.
     struct NetworkImages {
         u32 input_tic;
         u32 output_tic;

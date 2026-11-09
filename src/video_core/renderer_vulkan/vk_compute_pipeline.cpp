@@ -378,10 +378,10 @@ bool ComputePipeline::CanReplaceOcarinaUpscale() const {
            std::ranges::none_of(info.storage_buffers_descriptors, &Shader::StorageBufferDescriptor::is_written);
 }
 
-// The colour input and output of a software-HMMA network: the sampled 2D RGBA8 texture and the
-// written 2D RGBA16-float image of the same size (Star Fox's upscaler contract; the other textures
-// are the network's weights). Logged once per shader, so a log shows the images of a network this
-// does not recognize.
+// The colour input and output of a software-HMMA network: the sampled 2D colour texture and the
+// written 2D colour image at least as large (the other textures are the network's weights). Star
+// Fox renders 1600x900 RGBA16-float and the network writes 1920x1080 RGBA8 sRGB. Logged once per
+// shader, so a log shows the images of a network this does not recognize.
 void ComputePipeline::FindNetworkInputOutput(
     TextureCache& texture_cache, std::span<const VideoCommon::ImageViewInOut> views) {
     static std::mutex logged_mutex;
@@ -390,6 +390,10 @@ void ComputePipeline::FindNetworkInputOutput(
         std::scoped_lock lock{logged_mutex};
         return logged.insert(shader_hash).second;
     }();
+    const auto colour = [](PixelFormat format) {
+        return format == PixelFormat::A8B8G8R8_SRGB || format == PixelFormat::A8B8G8R8_UNORM ||
+               format == PixelFormat::R16G16B16A16_FLOAT || format == PixelFormat::B10G11R11_FLOAT;
+    };
     const size_t first_texture = Shader::NumDescriptors(info.texture_buffer_descriptors) +
                                  Shader::NumDescriptors(info.image_buffer_descriptors);
     const size_t first_image = first_texture + Shader::NumDescriptors(info.texture_descriptors);
@@ -399,15 +403,19 @@ void ComputePipeline::FindNetworkInputOutput(
                            view.size.height, static_cast<u32>(view.format),
                            static_cast<u32>(view.type));
     };
+    // The largest colour texture: the weights are small, the colour input is the render size.
     std::optional<size_t> input;
     for (size_t index = first_texture; index < first_image; ++index) {
         const auto& view{texture_cache.GetImageView(views[index].id)};
         if (log) {
             LOG_INFO(Render_Vulkan, "HMMA network {:016x} samples {}", shader_hash, describe(index));
         }
-        if (!input && view.type == VideoCommon::ImageViewType::e2D &&
-            (view.format == PixelFormat::A8B8G8R8_SRGB ||
-             view.format == PixelFormat::A8B8G8R8_UNORM)) {
+        if (view.type != VideoCommon::ImageViewType::e2D || !colour(view.format)) {
+            continue;
+        }
+        if (!input || view.size.width * view.size.height >
+                          texture_cache.GetImageView(views[*input].id).size.width *
+                              texture_cache.GetImageView(views[*input].id).size.height) {
             input = index;
         }
     }
@@ -420,13 +428,12 @@ void ComputePipeline::FindNetworkInputOutput(
                          desc.is_written ? "writes" : "reads", describe(index));
             }
             if (network_images || !input || !desc.is_written || desc.is_read ||
-                view.type != VideoCommon::ImageViewType::e2D ||
-                view.format != PixelFormat::R16G16B16A16_FLOAT) {
+                view.type != VideoCommon::ImageViewType::e2D || !colour(view.format)) {
                 continue;
             }
             const auto& input_view{texture_cache.GetImageView(views[*input].id)};
-            if (view.size.width == input_view.size.width &&
-                view.size.height == input_view.size.height) {
+            if (view.size.width >= input_view.size.width &&
+                view.size.height >= input_view.size.height) {
                 network_images = NetworkImages{views[*input].index, views[index].index};
             }
         }
