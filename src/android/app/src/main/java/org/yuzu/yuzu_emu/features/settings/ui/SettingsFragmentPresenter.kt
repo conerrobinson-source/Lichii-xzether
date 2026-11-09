@@ -543,6 +543,7 @@ class SettingsFragmentPresenter(
             add(IntSetting.FRAMES_AHEAD.key)
             add(IntSetting.SCENE_MEMORY_CAP.key)
             add(IntSetting.OOT_ANTI_ALIASING.key)
+            add(IntSetting.PRECACHE_SHADERS.key)
             add(IntSetting.MAX_ANISOTROPY.key)
             add(IntSetting.RENDERER_VRAM_USAGE_MODE.key)
             add(IntSetting.RENDERER_ASTC_DECODE_METHOD.key)

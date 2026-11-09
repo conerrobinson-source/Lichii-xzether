@@ -35,6 +35,7 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     FRAMES_AHEAD("frames_ahead"),
     SCENE_MEMORY_CAP("scene_memory_cap"),
     OOT_ANTI_ALIASING("oot_anti_aliasing"),
+    PRECACHE_SHADERS("precache_shaders"),
     FRAME_PACING_MODE("frame_pacing_mode"),
     AUDIO_OUTPUT_ENGINE("output_engine"),
     MAX_ANISOTROPY("max_anisotropy"),

@@ -1152,6 +1152,10 @@
     <string name="oot_anti_aliasing_description">No sharpening skips the game\'s anti-aliasing network, which is slow on phones, and shows the image without its strong sharpening.</string>
     <string name="oot_anti_aliasing_game">Game</string>
     <string name="oot_anti_aliasing_no_sharpening">No sharpening</string>
+    <string name="precache_shaders">Precache shaders</string>
+    <string name="precache_shaders_description">Builds the shaders found in the game files and in the pipeline cache on the loading screen, before the game starts, so they don\'t stutter when first used. Longer load, smoother first minutes. Needs the game to have been played once so the cache has something to build.</string>
+    <string name="precache_shaders_off">Off</string>
+    <string name="precache_shaders_always">Always</string>
     <string name="scene_memory_cap">Limit memory during scene loads</string>
     <string name="scene_memory_cap_description">Keeps at most 256 MB of upload buffers while a scene loads and frees large ones every frame. Helps games that get closed for low memory, but slows games that stream textures. Auto: Ocarina of Time only.</string>
 

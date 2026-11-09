@@ -799,6 +799,15 @@ abstract class SettingsItem(
                 )
             )
             put(
+                SingleChoiceSetting(
+                    IntSetting.PRECACHE_SHADERS,
+                    titleId = R.string.precache_shaders,
+                    descriptionId = R.string.precache_shaders_description,
+                    choicesId = R.array.precacheShadersNames,
+                    valuesId = R.array.precacheShadersValues
+                )
+            )
+            put(
                 SwitchSetting(
                     BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS,
                     titleId = R.string.renderer_asynchronous_shaders,

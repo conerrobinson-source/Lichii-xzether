@@ -566,6 +566,15 @@
         <item>1</item>
     </integer-array>
 
+    <string-array name="precacheShadersNames">
+        <item>@string/precache_shaders_off</item>
+        <item>@string/precache_shaders_always</item>
+    </string-array>
+    <integer-array name="precacheShadersValues">
+        <item>0</item>
+        <item>2</item>
+    </integer-array>
+
     <string-array name="framesAheadNames">
         <item>@string/frames_ahead_auto</item>
         <item>@string/frames_ahead_off</item>
