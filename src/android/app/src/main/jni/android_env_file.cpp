@@ -51,6 +51,11 @@ void SetTestBuildDefaults() {
         // Into the log, flushed per line: the last BEGIN without an END names the shaders the
         // driver crashed on (Ocarina of Time on the Qualcomm driver dies on a shader).
         {"EDEN_NX2_PIPELINE_BUILD_TRACE", "log"},
+        // Ocarina of Time (Fritchii #641 ports): let its multi-core threads use idle cores, and
+        // sleep 500 us in the resource thread's busy rescan. KEY=0 in env.txt turns either off;
+        // EDEN_NX2_OOT_POLL_BACKOFF_US=<us> changes the sleep (0 = none).
+        {"EDEN_NX2_OOT_WIDE_AFFINITY", "1"},
+        {"EDEN_NX2_OOT_POLL_BACKOFF", "1"},
     };
     for (const auto& [key, value] : Defaults) {
         if (std::getenv(key) == nullptr) {

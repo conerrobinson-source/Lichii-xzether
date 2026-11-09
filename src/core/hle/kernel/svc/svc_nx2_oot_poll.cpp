@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
+#include <string>
 
 #include "common/logging.h"
 #include "core/core.h"
@@ -11,7 +13,6 @@
 #include "core/hle/kernel/kernel.h"
 #include "core/hle/kernel/svc.h"
 #include "core/hle/kernel/svc/svc_nx2_oot_poll.h"
-#include "video_core/nx2_debug_control.h"
 
 namespace Kernel::Svc {
 namespace {
@@ -26,6 +27,23 @@ constexpr u32 PollSvc = 0xF3;
 constexpr s64 DefaultBackoffUs = 500;
 constexpr s64 MaxBackoffUs = 16000;
 
+// EDEN_NX2_OOT_POLL_BACKOFF_US (read once): microseconds the resource request thread sleeps
+// before rescanning requests that are not ready. Unset or 1 = 500 us; 0 = no sleep (as without
+// the patch, plus one SVC per rescan); otherwise that many us, at most 16000.
+s64 BackoffUs() {
+    static const s64 us = [] {
+        const char* value = std::getenv("EDEN_NX2_OOT_POLL_BACKOFF_US");
+        if (value == nullptr || *value == '\0') {
+            return DefaultBackoffUs;
+        }
+        const s64 parsed = std::strtoll(value, nullptr, 10);
+        return parsed <= 0 ? s64{0}
+               : parsed == 1 ? DefaultBackoffUs
+                             : (std::min)(parsed, MaxBackoffUs);
+    }();
+    return us;
+}
+
 } // Anonymous namespace
 
 bool CallNx2OotPollBackoff(Core::System& system, u32 imm) {
@@ -36,16 +54,11 @@ bool CallNx2OotPollBackoff(Core::System& system, u32 imm) {
     if (!process.Is64Bit() || process.GetProgramId() != OotProgramId) {
         return false;
     }
-    // EXP25: 0 = no sleep (the walk starts again at once, as without the patch), 1 = 500 us,
-    // above 1 = that many us (at most 16000).
-    const int mode = VideoCore::Nx2Debug::Experiment(25);
-    const s64 us = mode <= 0   ? 0
-                   : mode == 1 ? DefaultBackoffUs
-                               : (std::min)(static_cast<s64>(mode), MaxBackoffUs);
+    const s64 us = BackoffUs();
     static std::atomic<u64> calls{};
     const u64 n = calls.fetch_add(1, std::memory_order_relaxed) + 1;
     if (n == 1 || n % 100000 == 0) {
-        LOG_INFO(Kernel_SVC, "OoT resource poll backoff (EXP25): {} rescans, now {} us each", n,
+        LOG_INFO(Kernel_SVC, "OoT resource poll backoff: {} rescans, {} us each", n,
                  us);
     }
     if (us > 0) {

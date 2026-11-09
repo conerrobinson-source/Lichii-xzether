@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstddef>
 #include <cstring>
 #include <span>
@@ -63,7 +64,18 @@ struct BuiltinPatch {
     size_t state_size = 0;
     // Another built-in this one contains; it is skipped once this one is applied.
     std::string_view replaces{};
+    /// When set, the patch applies only while this environment variable is 1 (A/B before it
+    /// becomes a default).
+    const char* enable_env = nullptr;
 };
+
+bool BuiltinPatchEnabled(const BuiltinPatch& patch) {
+    if (patch.enable_env == nullptr) {
+        return true;
+    }
+    const char* const value = std::getenv(patch.enable_env);
+    return value != nullptr && std::string_view{value} == "1";
+}
 
 constexpr std::array<u8, 4> MAX_RESOLUTION_ORIGINAL{0xE8, 0x41, 0x00, 0x36};
 constexpr std::array<u8, 4> MAX_RESOLUTION_BRANCH{0x0F, 0x02, 0x00, 0x14};
@@ -111,13 +123,17 @@ constexpr std::array FPS_UNLOCK_RECORDS{
 constexpr std::array<u8, 4> POLL_RESCAN_BRANCH{0x68, 0x2E, 0x01, 0x36};  // tbz w8, #0, 0x17088
 constexpr std::array<u8, 4> POLL_BACKOFF_SVC{0x61, 0x1E, 0x00, 0xD4};    // svc #0xf3
 constexpr std::array<u8, 4> POLL_BACKOFF_RETURN{0x0D, 0xE2, 0xFF, 0x17}; // b 0xf8c0
+constexpr std::array<u8, 4> POLL_RESCAN_ORIGINAL{0x28, 0x70, 0x05, 0x36}; // tbz w8, #0, 0xf8c0
 constexpr std::array POLL_BACKOFF_RECORDS{
     BuiltinPatchRecord{.module_offset = 0x14ABC,
                        .bytes = POLL_RESCAN_BRANCH,
-                       .checked = true,
-                       .original = 0x36057028}, // tbz w8, #0, 0xf8c0
-    BuiltinPatchRecord{.module_offset = 0x17088, .bytes = POLL_BACKOFF_SVC, .checked = true, .original = 0},
-    BuiltinPatchRecord{.module_offset = 0x1708C, .bytes = POLL_BACKOFF_RETURN, .checked = true, .original = 0},
+                       .original = POLL_RESCAN_ORIGINAL},
+    BuiltinPatchRecord{.module_offset = 0x17088,
+                       .bytes = POLL_BACKOFF_SVC,
+                       .executable_padding = true},
+    BuiltinPatchRecord{.module_offset = 0x1708C,
+                       .bytes = POLL_BACKOFF_RETURN,
+                       .executable_padding = true},
 };
 
 constexpr std::array BUILTIN_PATCHES{
@@ -582,7 +598,7 @@ std::vector<u8> PatchManager::PatchNSO(const std::vector<u8>& nso, const std::st
     const auto disabled = GetDisabledAddons();
     std::vector<std::string_view> replaced;
     for (const auto& patch : BUILTIN_PATCHES) {
-        if (patch.title_id != title_id || patch.module != name) {
+        if (patch.title_id != title_id || patch.module != name || !BuiltinPatchEnabled(patch)) {
             continue;
         }
         if (std::find(disabled.cbegin(), disabled.cend(), patch.name) != disabled.cend()) {
@@ -696,7 +712,8 @@ bool PatchManager::HasNSOPatch(const BuildID& build_id_, std::string_view name) 
     LOG_INFO(Loader, "Querying NSO patch existence for build_id={}, name={}", build_id, name);
 
     if (std::ranges::any_of(BUILTIN_PATCHES, [&](const BuiltinPatch& patch) {
-            return patch.title_id == title_id && patch.module == name;
+            return patch.title_id == title_id && patch.module == name &&
+                   BuiltinPatchEnabled(patch);
         })) {
         return true;
     }
@@ -1237,7 +1254,7 @@ std::vector<Patch> PatchManager::GetPatches(VirtualFile update_raw) const {
     }
 
     for (const auto& patch : BUILTIN_PATCHES) {
-        if (patch.title_id != title_id) {
+        if (patch.title_id != title_id || !BuiltinPatchEnabled(patch)) {
             continue;
         }
         const auto is_disabled = [&](std::string_view name) {
