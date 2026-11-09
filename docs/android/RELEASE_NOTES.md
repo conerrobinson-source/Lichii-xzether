@@ -1,32 +1,32 @@
-# Lichii for Android 0.4.0
+# Lichii for Android 0.5.0
 
 Tested on a Samsung Galaxy S26 (Exynos 2600, Xclipse 960, 12 GB, Android 17) with a custom Mesa RADV driver.
 
 ## Highlights
 
 - **The Legend of Zelda: Ocarina of Time**
-  - The latest game update boots. It stopped at a black screen while opening a microphone stream. Lichii for Android now tells games there is no microphone, as before.
-  - Cutscene audio stays in sync with the video.
-  - Fewer graphical issues: fixes for white flashes from stale occlusion counts, the red line in the tomb, Hyrule Field grass, and flickering water.
-  - Built-in FPS Unlock: the game logic keeps real speed when the frame rate changes.
-- **Memory**
-  - **New per-game setting "Limit memory during scene loads"** (Advanced graphics, Auto / Off / On). 0.3.0 applied this limit to every game, which slowed down games that load textures all the time. Auto now applies it to Ocarina of Time only.
-  - **GPU memory follows the phone's real RAM.** Some drivers report a 32 GB GPU heap on a 12 GB phone. The GPU now gets at most a third of the RAM, and the texture cache gives memory back when Android runs low. This should mean fewer games closed for low memory.
-  - The log now lists the GPU memory heaps the driver reports, the RAM and the free memory, to help with memory reports.
-- **The latest Lichii (Zortos) changes for Android**, about 130 in all. Among them:
-  - Mesh shader draws on GPUs without mesh shader support.
-  - Tensor operations on GPUs with cooperative matrix support.
-  - Faster ASTC texture decoding.
-  - Quicker GPU thread wake-ups.
-  - Shader and rendering fixes for Mario Kart World, Welcome Tour movies, Mario Tennis Fever button icons and other Switch 2 games.
-
-  PC-only changes (Windows, desktop UI, updater, NVIDIA DLSS) are left out or have no effect on Android.
+  - **Faster and much steadier.**
+    - The game's anti-aliasing network is skipped by default on Android. It ran as slow software tensor math on phones. A new per-game setting, "Ocarina of Time anti-aliasing" (advanced graphics), brings it back with Game.
+    - The two GPU threads wait for each other far less (two upstream fixes for semaphore acquires and releases).
+  - **Fewer broken starts.** Some starts showed a black scene with white and purple streaks. An upstream fix for a shader-translation race that depended on compile order should stop them.
+  - **More ground detail on Xclipse.** The game's mesh-shader draws were skipped because they stalled the GPU. They are now drawn through compute instead.
+  - A crash when loading a save is fixed.
+- **Memory.** Fewer games closed for low memory:
+  - GPU memory gives way before Samsung's low-memory killer acts on low swap.
+  - Render targets drawn below 1x no longer keep a full-size copy as well.
+  - On GPUs without ASTC (Xclipse), converted ASTC textures keep their mip levels from 512 px on.
+  - NUP game files are decompressed only as far as the game reads.
+  - Images that don't fit in memory fail cleanly instead of showing garbage.
+  - Shader compiling uses less memory.
+- **Smoother for all games.**
+  - Evicted textures the GPU drew into are copied back together, behind one wait.
+  - Each draw costs less on the GPU thread (upstream).
 
 ## Known issues
 
-- Ocarina of Time at **1x** on a 12 GB phone uses more memory than the phone has. Android then swaps constantly and the frame rate drops. Use **0.5x** resolution in the game's settings. **16 GB of RAM** is still recommended.
+- Ocarina of Time on a 12 GB phone can still be closed for low memory, most often on the first start while shaders compile, or with other apps open. Use **0.5x** resolution. **16 GB of RAM** is recommended.
 - Microphone input is not supported on Android.
-- The phone heats up during long sessions and slows down until it cools.
+- The phone heats up during long sessions and slows down until it cools. Game Booster's performance mode helps.
 
 ## For testers
 
