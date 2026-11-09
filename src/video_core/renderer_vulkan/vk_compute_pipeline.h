@@ -99,9 +99,10 @@ public:
         VideoCore::Surface::PixelFormat output_format;
     };
 
-    /// Whether this shader lowers HMMA through subgroup shuffles (no cooperative matrix).
+    /// Whether this shader multiplies matrices with HMMA lowered through subgroup shuffles (no
+    /// cooperative matrix).
     [[nodiscard]] bool IsSoftwareHmma() const noexcept {
-        return info.uses_subgroup_shuffles && !info.uses_cooperative_matrix;
+        return info.uses_tensor_mul_add && !info.uses_cooperative_matrix;
     }
 
     /// The network's colour input and output of the last configured dispatch, when it has them.
