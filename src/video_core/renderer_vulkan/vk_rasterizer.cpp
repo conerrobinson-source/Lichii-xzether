@@ -22,6 +22,7 @@
 #include <mutex>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <fmt/format.h>
@@ -1755,15 +1756,21 @@ void RasterizerVulkan::Clear(u32 layer_count) {
 // ~2000 barriers; on the Adreno 840 the Star Fox network takes about 600 ms per frame. Instead of
 // dispatching it, its output is a bilinear blit of its colour input (Star Fox: 1600x900
 // RGBA16-float to 1920x1080 RGBA8 sRGB), and the network never runs. Its other outputs are not
-// written. EDEN_NX2_HMMA_BYPASS=0 keeps the native dispatch. The caller holds the texture cache
-// mutex.
+// written. The "game DLSS network" setting (run the game's own network rather than a replacement)
+// or EDEN_NX2_HMMA_BYPASS=0 keeps the native dispatch. The caller holds the texture cache mutex.
 bool RasterizerVulkan::StandInForSoftwareHmma(const ComputePipeline& pipeline) {
     static const bool enabled = [] {
         const char* const value = std::getenv("EDEN_NX2_HMMA_BYPASS");
         return value == nullptr || (value[0] != '0' && std::string_view{value} != "off");
     }();
     const auto& images = pipeline.NetworkInputOutput();
-    if (!enabled || !images || !kepler_compute->IsNativeMode()) {
+    if (!enabled || !images || !kepler_compute->IsNativeMode() ||
+        Settings::values.game_dlss_network.GetValue()) {
+        static std::unordered_set<u64> logged_native;
+        if (images && logged_native.insert(pipeline.ShaderHash()).second) {
+            LOG_INFO(Render_Vulkan, "HMMA network {:016x}: stand-in turned off, dispatching natively",
+                     pipeline.ShaderHash());
+        }
         return false;
     }
     using namespace VideoCommon::FireEmblemUpscale;
