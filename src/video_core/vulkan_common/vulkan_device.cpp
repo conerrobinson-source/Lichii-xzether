@@ -562,12 +562,41 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken color write enable.");
         RemoveExtensionFeature(extensions.color_write_enable, features.color_write_enable,
                                VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
-        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken shader atomic int64.");
-        RemoveExtensionFeature(extensions.shader_atomic_int64, features.shader_atomic_int64,
-                               VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME);
-        features.shader_atomic_int64.shaderBufferInt64Atomics = false;
-        features.shader_atomic_int64.shaderSharedInt64Atomics = false;
-        features.features.shaderInt64 = false;
+        // Adreno 6xx drivers miscompiled 64-bit integer shaders; Adreno 7xx and 8xx run them.
+        // Without int64 every global memory access with a 64-bit address is dropped ("Int64 not
+        // supported, ignoring memory operation") and compute shaders with global atomics fail to
+        // build: on an Adreno 840 (Snapdragon 8 Elite Gen 5) that broke Ocarina of Time's compute
+        // passes and Star Fox's rendering. EDEN_NX2_QUALCOMM_INT64=0/1 overrides the model check.
+        const u32 adreno_model = [this] {
+            const std::string_view name{properties.properties.deviceName};
+            const size_t digits = name.find_first_of("0123456789");
+            if (name.find("Adreno") == std::string_view::npos || digits == std::string_view::npos) {
+                return u32{0};
+            }
+            u32 model = 0;
+            for (size_t i = digits; i < name.size() && name[i] >= '0' && name[i] <= '9'; ++i) {
+                model = model * 10 + static_cast<u32>(name[i] - '0');
+            }
+            return model;
+        }();
+        const char* const int64_override = std::getenv("EDEN_NX2_QUALCOMM_INT64");
+        const bool keep_int64 = int64_override != nullptr
+                                    ? int64_override[0] == '1'
+                                    : adreno_model >= 700 && features.features.shaderInt64;
+        if (keep_int64) {
+            LOG_INFO(Render_Vulkan,
+                     "Adreno {}: keeping shader int64 (buffer atomics {}, shared atomics {})",
+                     adreno_model, features.shader_atomic_int64.shaderBufferInt64Atomics,
+                     features.shader_atomic_int64.shaderSharedInt64Atomics);
+        } else {
+            LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken shader atomic int64 (Adreno {}).",
+                        adreno_model);
+            RemoveExtensionFeature(extensions.shader_atomic_int64, features.shader_atomic_int64,
+                                   VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME);
+            features.shader_atomic_int64.shaderBufferInt64Atomics = false;
+            features.shader_atomic_int64.shaderSharedInt64Atomics = false;
+            features.features.shaderInt64 = false;
+        }
         LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken workgroup memory explicit layout.");
         RemoveExtensionFeature(extensions.workgroup_memory_explicit_layout,
                                features.workgroup_memory_explicit_layout,
