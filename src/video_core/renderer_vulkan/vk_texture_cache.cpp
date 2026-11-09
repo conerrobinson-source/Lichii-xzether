@@ -51,6 +51,7 @@
 #ifdef EGLANTINE_STREAMLINE
 #include "video_core/vulkan_common/streamline.h"
 #endif
+#include "video_core/vulkan_common/unbacked_fallback.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/textures/decoders.h"
@@ -431,7 +432,8 @@ constexpr std::array<VkFormat, 2> OpaqueAstcViewFormats{VK_FORMAT_BC1_RGBA_UNORM
             return static_cast<u32>(std::strtoul(text, nullptr, 10));
         }
 #ifdef __ANDROID__
-        return 1024U;
+        // Ocarina of Time at 0.5x on a 12 GB phone: 1024 px still left it closed for low memory.
+        return 512U;
 #else
         return 0U;
 #endif
@@ -2984,6 +2986,9 @@ void TextureCacheRuntime::TickFrame() {
     for (const PendingTranscode& t : free_transcodes) {
         free_bytes += decode_bytes(t);
     }
+    while (!deferred_image_frees.empty() && scheduler.IsFree(deferred_image_frees.front().first)) {
+        deferred_image_frees.pop_front();
+    }
     while (!pending_transcodes.empty() && scheduler.IsFree(pending_transcodes.front().tick)) {
         PendingTranscode& done = pending_transcodes.front();
         const u64 bytes = decode_bytes(done);
@@ -3041,7 +3046,7 @@ Image::Image(TextureCacheRuntime& runtime_, const ImageInfo& info_, GPUVAddr gpu
             flags |= VideoCommon::ImageFlagBits::SparseLayers;
         } else if (UsesSparseTiles(runtime_.device, info, gpu_addr_) && InitSparseTiles()) {
             flags |= VideoCommon::ImageFlagBits::SparseTiles;
-        } else if (texels <= (u64{1} << 28)) {
+        } else if (texels <= MaxBackedImageTexels) {
             // Not too big to back (see MemoryAllocator::CreateImage): unbacked because nothing
             // was written there yet, so the first write gets it replaced.
             flags |= VideoCommon::ImageFlagBits::UnwrittenSparse;
@@ -3294,7 +3299,7 @@ void Image::DownloadMemory(std::span<VkBuffer> buffers_span, std::span<size_t> o
             return;
     }
 
-    if (!original_image) {
+    if (!original_image && False(flags & ImageFlagBits::Rescaled)) {
         LOG_CRITICAL(Render_Vulkan, "Missing image at download: gpu={:#x}, cpu={:#x}, type={}, format={}, flags={:#x}, size={}, dimensions={}x{}",
                      gpu_addr, cpu_addr, static_cast<u32>(info.type), static_cast<u32>(info.format),
                      static_cast<u32>(flags), unswizzled_size_bytes, info.size.width, info.size.height);
@@ -4211,6 +4216,7 @@ bool Image::ScaleUp(bool ignore) {
     }
     current_image = &Image::scaled_image;
     if (ignore) {
+        FreeOriginalIfDownscaled();
         return true;
     }
     if (aspect_mask == 0) {
@@ -4224,7 +4230,72 @@ bool Image::ScaleUp(bool ignore) {
     } else {
         BlitScale(*scheduler, *original_image, *scaled_image, info, aspect_mask, resolution);
     }
+    FreeOriginalIfDownscaled();
     return true;
+}
+
+void TextureCacheRuntime::DeferImageFree(vk::Image image) {
+    deferred_image_frees.emplace_back(scheduler.CurrentTick(), std::move(image));
+}
+
+void Image::FreeOriginalIfDownscaled() {
+    // Below 1x the full-size image is rarely used again once rendering went to the scaled one:
+    // Ocarina of Time's 2560x1440 targets and 12288x12288 shadow map kept ~0.9 GB of a phone's
+    // memory for nothing. Plain backed 2D color or depth images only; uploads and downloads scale
+    // down first, which makes it again (RecreateOriginal). Android only, where memory runs out.
+#ifdef __ANDROID__
+    if (!Settings::values.resolution_info.downscale || !original_image ||
+        !scaled_image ||
+        info.type != ImageType::e2D || info.num_samples != 1 ||
+        True(flags & (ImageFlagBits::Unbacked | ImageFlagBits::SparseLayers |
+                      ImageFlagBits::SparseTiles | ImageFlagBits::UnwrittenSparse |
+                      ImageFlagBits::Converted | ImageFlagBits::TrimmedLevels)) ||
+        std::ranges::any_of(storage_image_views, [](const vk::ImageView& view) { return !!view; }) ||
+        guest_size_bytes < (u64{4} << 20)) {
+        return;
+    }
+    if (ENABLE_MSAA_RESOLVE_CONSUME) {
+        runtime->EraseResolveShadow(*original_image);
+    }
+    runtime->DeferImageFree(std::move(original_image));
+    original_image = vk::Image{};
+#endif
+}
+
+void Image::RecreateOriginal() {
+    original_image = MakeImage(runtime->device, runtime->memory_allocator,
+                               TrimmedHostInfo(runtime->device, info, host_level_offset),
+                               runtime->ViewFormats(info.format),
+                               AstcHostFormat(runtime->device, info), false, false);
+    if (runtime->device.HasDebuggingToolAttached()) {
+        original_image.SetObjectNameEXT(VideoCommon::Name(*this).c_str());
+    }
+    // A new image starts undefined; the cache keeps its images in the general layout.
+    const VkImage handle = *original_image;
+    const VkImageAspectFlags aspect = aspect_mask != 0 ? aspect_mask : ImageAspectMask(info.format);
+    scheduler->RequestOutsideRenderPassOperationContext();
+    scheduler->Record([handle, aspect](vk::CommandBuffer cmdbuf) {
+        const VkImageMemoryBarrier barrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .pNext = nullptr,
+            .srcAccessMask = VK_ACCESS_NONE,
+            .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = handle,
+            .subresourceRange{
+                .aspectMask = aspect,
+                .baseMipLevel = 0,
+                .levelCount = VK_REMAINING_MIP_LEVELS,
+                .baseArrayLayer = 0,
+                .layerCount = VK_REMAINING_ARRAY_LAYERS,
+            },
+        };
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                               vk::PIPELINE_STAGE_GRAPHICS_COMPUTE_TRANSFER, 0, barrier);
+    });
 }
 
 bool Image::ScaleDown(bool ignore) {
@@ -4236,6 +4307,12 @@ bool Image::ScaleDown(bool ignore) {
         return false;
     }
     ASSERT(info.type != ImageType::Linear);
+    if (!original_image) {
+        // Freed after the scale up: its contents come from the scaled image, even when the
+        // caller ignores them (a partial upload blits the rest back up).
+        RecreateOriginal();
+        ignore = false;
+    }
     flags &= ~ImageFlagBits::Rescaled;
     current_image = &Image::original_image;
     if (ignore) {

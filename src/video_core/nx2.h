@@ -47,12 +47,16 @@ inline void Nx2MarkGpuWritten(u64 device_address, u64 size) {
     }
     const u64 last = std::min<u64>((device_address + size - 1) >> Nx2WrittenPageBits,
                                    g_nx2_gpu_written_pages.size() * 64 - 1);
-    for (u64 page = device_address >> Nx2WrittenPageBits; page <= last; ++page) {
+    // A word at a time: storage buffers of several MiB are marked on every draw that binds them.
+    for (u64 page = device_address >> Nx2WrittenPageBits; page <= last;) {
+        const u64 first_bit = page % 64;
+        const u64 bits = (std::min<u64>)(64 - first_bit, last - page + 1);
+        const u64 mask = (bits == 64 ? ~u64{0} : (u64{1} << bits) - 1) << first_bit;
         auto& word = g_nx2_gpu_written_pages[page / 64];
-        const u64 bit = u64{1} << (page % 64);
-        if ((word.load(std::memory_order_relaxed) & bit) == 0) {
-            word.fetch_or(bit, std::memory_order_relaxed);
+        if ((word.load(std::memory_order_relaxed) & mask) != mask) {
+            word.fetch_or(mask, std::memory_order_relaxed);
         }
+        page += bits;
     }
 }
 
@@ -361,7 +365,8 @@ inline bool Nx2SparseUnwritten(u64 gpu_address, u64 size) {
 
 /// Channels suspended on a semaphore acquire. A console channel polls and sees every release;
 /// Eden writes releases in bursts when fences signal and resumes waiters only between command
-/// lists, so an acquire-equal could miss its value. Writes latch the waiters they satisfy.
+/// lists, so an acquire-equal could miss its value. Writes latch the waiters they satisfy, and so do
+/// releases whose write waits for the host GPU.
 class Nx2SemaphoreWaiters {
 public:
     // Puller GpuSemaphoreOperation values.
@@ -377,7 +382,11 @@ public:
     void Add(const void* owner, u64 device_address, u32 value, u32 operation) {
         std::scoped_lock lk{mutex};
         std::erase_if(waiters, [owner](const Waiter& w) { return w.owner == owner; });
-        waiters.push_back({owner, device_address, value, operation, false});
+        Waiter waiter{owner, device_address, value, operation, false};
+        if (const auto it = delayed.find(device_address); it != delayed.end()) {
+            waiter.latched = Matches(waiter, it->second);
+        }
+        waiters.push_back(waiter);
         count.store(waiters.size(), std::memory_order_release);
     }
 
@@ -405,11 +414,31 @@ public:
             return;
         }
         std::scoped_lock lk{mutex};
-        for (auto& w : waiters) {
-            if (w.address == device_address && !w.latched && Matches(w, value)) {
-                w.latched = true;
-            }
+        Latch(device_address, value);
+    }
+
+    /// A release the GPU reached in command order whose write waits for the host GPU to finish
+    /// the work before it (fence-flagged reports, see FenceManager::SignalFence). It meets
+    /// acquires now: work a channel runs after its acquire reaches the host GPU after that work.
+    /// Waiting for the write instead made every handoff between channels wait for the host GPU.
+    void OnDelayedRelease(u64 device_address, u32 value) {
+        std::scoped_lock lk{mutex};
+        delayed.insert_or_assign(device_address, value);
+        Latch(device_address, value);
+    }
+
+    /// The fence of a delayed release ran: memory holds its value or a later write.
+    void OnDelayedReleaseDone(u64 device_address, u32 value) {
+        std::scoped_lock lk{mutex};
+        if (const auto it = delayed.find(device_address); it != delayed.end() && it->second == value) {
+            delayed.erase(it);
         }
+    }
+
+    /// A new emulation session starts: the last one's fences may never have run.
+    void ClearDelayedReleases() {
+        std::scoped_lock lk{mutex};
+        delayed.clear();
     }
 
 private:
@@ -420,6 +449,14 @@ private:
         u32 operation;
         bool latched;
     };
+
+    void Latch(u64 device_address, u32 value) {
+        for (auto& w : waiters) {
+            if (w.address == device_address && !w.latched && Matches(w, value)) {
+                w.latched = true;
+            }
+        }
+    }
 
     static bool Matches(const Waiter& w, u32 current) {
         switch (w.operation) {
@@ -436,6 +473,7 @@ private:
 
     std::mutex mutex;
     std::vector<Waiter> waiters;
+    std::map<u64, u32> delayed;
     std::atomic<size_t> count{};
 };
 
