@@ -27,18 +27,18 @@ Requirements: an arm64 phone with Android 13 or newer and Vulkan 1.3. Games, key
 
 ## Tested on
 
-| | |
-|---|---|
-| Phone | Samsung Galaxy S26 (SM-S942B) |
-| SoC | Exynos 2600 |
-| GPU | Samsung Xclipse 960 (AMD RDNA3, GFX11) |
-| RAM | 12 GB |
-| OS | Android 17 (One UI) |
-| GPU driver | Custom Mesa RADV build for Xclipse ("RADV Xclipse", Mesa 27.0-devel), installed through the app's GPU driver manager |
+| | | |
+|---|---|---|
+| Phone | Samsung Galaxy S26 (SM-S942B) | Samsung Galaxy S24 (SM-S921B) |
+| SoC | Exynos 2600 | Exynos 2400 |
+| GPU | Samsung Xclipse 960 (AMD RDNA3, GFX11) | Samsung Xclipse 940 (AMD RDNA3, GFX11) |
+| RAM | 12 GB | 8 GB |
+| OS | Android 17 (One UI) | Android 17 (One UI) |
+| GPU driver | Custom Mesa RADV build for Xclipse ("RADV Xclipse", Mesa 27.0-devel), installed through the app's GPU driver manager | Same |
 
 Samsung's own driver on the S26 is also RADV-based and works, but it is slower on this phone than the custom RADV build.
 
-Other phones may work, but this is the only device Hokkaido is tested on so far.
+Other phones may work, but these are the only devices Hokkaido is tested on so far.
 
 > 📺 **Game Testing & Video Footage:** Check out gameplay tests and video showcases on the [Exynos Gaming YouTube Channel](https://www.youtube.com/@ExynosGaming-t7k).
 
@@ -47,8 +47,9 @@ Other phones may work, but this is the only device Hokkaido is tested on so far.
 | Game | Status |
 |---|---|
 | The Legend of Zelda: Ocarina of Time (Switch 2) | Playable. Use 0.5x resolution; 16 GB of RAM recommended. |
+| Pokémon Pokopia | Playable and smooth, also on 8 GB phones. The sky is black. |
 
-Only results tested on the phone above are listed here.
+Only results tested on the phones above are listed here.
 
 ### What's different from upstream
 
