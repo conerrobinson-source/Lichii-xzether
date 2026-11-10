@@ -33,6 +33,7 @@
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/common_types.h"
+#include "common/fs/path_util.h"
 #include "common/literals.h"
 #include "common/logging.h"
 #include "common/memory_detect.h"
@@ -804,6 +805,23 @@ void LogMemoryTrace(const Device& device) {
                        s.allocationCount, s.allocationBytes >> 20, s.blockBytes >> 20);
     }
     LOG_INFO(Render_Vulkan, "Memory trace: types {}", types);
+    // Every allocation (type, size, usage) once device memory passes 2.4 GiB, as
+    // vma-allocations.json in the log directory: what the texture and buffer caches' own counts
+    // leave unexplained (Ocarina of Time's field: 2984 MiB allocated, 1731 MiB counted).
+    static bool dumped = false;
+    if (!dumped && stats.total.statistics.allocationBytes >= (u64{2400} << 20)) {
+        dumped = true;
+        char* json = nullptr;
+        vmaBuildStatsString(allocator, &json, VK_TRUE);
+        if (json != nullptr) {
+            const auto path =
+                Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) / "vma-allocations.json";
+            std::ofstream file{path, std::ios::binary | std::ios::trunc};
+            file << json;
+            vmaFreeStatsString(allocator, json);
+            LOG_INFO(Render_Vulkan, "Memory trace: allocations written to {}", path.string());
+        }
+    }
 }
 
 void LogMemoryStatistics(const Device& device) {
