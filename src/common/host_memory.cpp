@@ -1100,6 +1100,16 @@ void HostMemory::HintCold(size_t physical_offset, size_t length,
     if (length == 0 || backing_base == nullptr) {
         return;
     }
+    // EDEN_NX2_COLD_HINTS=0: no hints. An S26 Ultra's zram held 8.4 GiB of swapped pages in
+    // 4.7 GiB of RAM under Ocarina of Time (compressed textures do not compress again), so
+    // paging guest memory out may cost more than it frees there. Experiment, not for nx2.
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_COLD_HINTS");
+        return value == nullptr || value[0] != '0';
+    }();
+    if (!enabled) {
+        return;
+    }
     const auto hint = [length](u8* address) {
 #ifdef _WIN32
         // Unlocking pages that are not locked takes them out of the working set.
