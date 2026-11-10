@@ -209,6 +209,8 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     static constexpr size_t LargeScratchCapacity = 64U << 20;
 
     /// Splits large 2D image uploads into smaller chunks, avoiding multi-hundred MiB staging buffers.
+    /// Marks the guest memory of uploaded images cold (see RefreshContents).
+    void HintUploadedRangesCold();
     bool UploadInChunks(Image& image);
 
     /// Large layered images whose refresh can decode only the layers written since the last one.
@@ -749,6 +751,7 @@ private:
     std::vector<std::unique_ptr<AsyncDecodeContext>> async_decodes;
     /// Guest memory images were uploaded from since the last cold hint (device address, size).
     std::vector<std::pair<DAddr, u64>> uploaded_ranges;
+    u64 uploaded_ranges_bytes = 0;
 
     std::deque<PendingUnswizzle> unswizzle_queue;
     u8 current_unswizzle_frame;

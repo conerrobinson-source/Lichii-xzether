@@ -646,11 +646,8 @@ void TextureCache<P>::TickFrame() {
     sentenced_image_view.Tick();
     TickAsyncDecode();
     TickAsyncUnswizzle();
-    if (frame_tick % 600 == 0 && !uploaded_ranges.empty()) {
-        for (const auto& [address, size] : uploaded_ranges) {
-            device_memory.HintCold(address, size);
-        }
-        uploaded_ranges.clear();
+    if (frame_tick % 600 == 0) {
+        HintUploadedRangesCold();
     }
 
     runtime.TickFrame();
@@ -2194,7 +2191,26 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
         } else {
             uploaded_ranges.emplace_back(image.cpu_addr, image.guest_size_bytes);
         }
+        uploaded_ranges_bytes += image.guest_size_bytes;
+#ifdef __ANDROID__
+        // A scene load uploads for seconds without a frame ending: Ocarina of Time's field took
+        // 1 GiB of images in 6 s, their guest copies stayed resident and the S26 Ultra's
+        // low-memory killer ended the process with 7 GiB of swap free.
+        constexpr u64 ColdHintBatchBytes = 64_MiB;
+        if (uploaded_ranges_bytes >= ColdHintBatchBytes) {
+            HintUploadedRangesCold();
+        }
+#endif
     }
+}
+
+template <class P>
+void TextureCache<P>::HintUploadedRangesCold() {
+    for (const auto& [address, size] : uploaded_ranges) {
+        device_memory.HintCold(address, size);
+    }
+    uploaded_ranges.clear();
+    uploaded_ranges_bytes = 0;
 }
 
 template <class P>
