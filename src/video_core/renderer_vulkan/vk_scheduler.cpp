@@ -48,6 +48,9 @@ std::atomic<u64> g_profile_finish_ns{};
 std::atomic<u64> g_profile_window_start{};
 std::mutex g_profile_end_mutex;
 std::map<std::string, u64> g_profile_ends;
+/// Render passes begun by render area (width << 32 | height): on a tiler each one loads and
+/// stores its attachments, so a fragmented 12288x12288 shadow pass costs far more than its count.
+std::map<u64, u64> g_profile_pass_sizes;
 /// Finishes by caller: count and nanoseconds waited.
 std::map<std::string, std::pair<u64, u64>> g_profile_finish_sites;
 
@@ -93,6 +96,23 @@ void ReportSubmitCounts() {
             ends.emplace_back(count, site);
         }
         g_profile_ends.clear();
+    }
+    std::vector<std::pair<u64, u64>> sizes;
+    {
+        std::scoped_lock lock{g_profile_end_mutex};
+        for (const auto& [size, count] : g_profile_pass_sizes) {
+            sizes.emplace_back(count * (size >> 32) * (size & 0xFFFFFFFF), size);
+        }
+        std::string line;
+        std::sort(sizes.rbegin(), sizes.rend());
+        for (size_t i = 0; i < sizes.size() && i < 8; ++i) {
+            const u64 size = sizes[i].second;
+            line += fmt::format(" {}x{}: {:.0f}/s ({:.0f} Mpx/s)", size >> 32, size & 0xFFFFFFFF,
+                                static_cast<double>(g_profile_pass_sizes[size]) / seconds,
+                                static_cast<double>(sizes[i].first) / 1e6 / seconds);
+        }
+        g_profile_pass_sizes.clear();
+        LOG_INFO(Render_Vulkan, "Render passes by area:{}", line);
     }
     std::sort(ends.rbegin(), ends.rend());
     for (size_t i = 0; i < ends.size() && i < 16; ++i) {
@@ -337,6 +357,9 @@ void Scheduler::BeginRenderPassImpl(const Framebuffer* framebuffer, VkRenderPass
                                     const VkClearValue* clear_values, u32 clear_value_count) {
     if (VideoCommon::Nx2Profile::Enabled()) {
         g_profile_renderpasses.fetch_add(1, std::memory_order_relaxed);
+        const VkExtent2D area = framebuffer->RenderArea();
+        std::scoped_lock lock{g_profile_end_mutex};
+        ++g_profile_pass_sizes[u64{area.width} << 32 | area.height];
     }
     const VkFramebuffer framebuffer_handle = framebuffer->Handle();
     const VkExtent2D render_area = framebuffer->RenderArea();
