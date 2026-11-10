@@ -5,6 +5,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#include <mutex>
+#include <thread>
 #include <array>
 #include <bit>
 #include <limits>
@@ -220,6 +225,66 @@ MemoryAllocator::MemoryAllocator(const Device &device_)
 
 MemoryAllocator::~MemoryAllocator() = default;
 
+#ifdef __ANDROID__
+namespace {
+/// Android kills the foreground app when free memory collapses faster than it can reclaim it:
+/// Ocarina of Time's scene load took 2.6 GiB of images in one 15 s frame and MemAvailable went
+/// from 2.5 GiB to 0.6 GiB (1.9 GiB of it in the last two seconds) with 7.5 GiB of swap unused
+/// when the S26 Ultra's low-memory killer ended the process. Give reclaim time to keep up: while
+/// little is available, image allocations wait, briefly and within a budget per allocation.
+/// EDEN_NX2_MEMORY_PACING=0 disables; =<MiB> sets the floor (default 1024). A wait that
+/// recovers nothing is not repeated for two seconds, so a phone that is simply full does not stall.
+void PaceForMemory() {
+    static const s64 floor_mib = [] {
+        const char* value = std::getenv("EDEN_NX2_MEMORY_PACING");
+        return value != nullptr ? std::strtoll(value, nullptr, 10) : s64{1024};
+    }();
+    if (floor_mib <= 0) {
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    static std::mutex mutex;
+    static Clock::time_point next_check{};
+    static Clock::time_point next_log{};
+    static u64 waited_ms{};
+    std::scoped_lock lock{mutex};
+    const auto now = Clock::now();
+    if (now < next_check) {
+        return;
+    }
+    const auto available = [] {
+        std::ifstream file{"/proc/meminfo"};
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.starts_with("MemAvailable:")) {
+                return std::strtoll(line.c_str() + 13, nullptr, 10) >> 10;
+            }
+        }
+        return (std::numeric_limits<long long>::max)();
+    };
+    s64 mib = available();
+    const s64 first = mib;
+    u32 steps = 0;
+    // Up to 400 ms per allocation: a load already takes seconds, and a kill takes the session.
+    for (; mib < floor_mib && steps < 20; ++steps) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        mib = available();
+    }
+    waited_ms += steps * 20;
+    const bool futile = steps == 20 && mib <= first + 32;
+    next_check = Clock::now() +
+                 std::chrono::milliseconds{futile ? 2000 : mib < floor_mib * 2 ? 5 : 50};
+    if (steps != 0 && Clock::now() >= next_log) {
+        LOG_WARNING(Render_Vulkan,
+                    "Memory pacing: {} MiB available (floor {} MiB), waited {} ms, now {} MiB; "
+                    "{} ms waited in total",
+                    first, floor_mib, steps * 20, mib, waited_ms);
+        next_log = Clock::now() + std::chrono::milliseconds{500};
+    }
+}
+} // Anonymous namespace
+#endif
+
 vk::Image MemoryAllocator::CreateImage(const VkImageCreateInfo &ci, bool dedicated) const
 {
     vk::Image image;
@@ -238,6 +303,9 @@ vk::Image MemoryAllocator::TryCreateImage(const VkImageCreateInfo &ci, bool dedi
 
 VkResult MemoryAllocator::AllocateImage(const VkImageCreateInfo &ci, bool dedicated, bool may_fail,
                                         vk::Image &image) const {
+#ifdef __ANDROID__
+    PaceForMemory();
+#endif
     const VmaAllocationCreateInfo alloc_ci = {
             // Best fit: images freed by the thousand leave holes in the blocks, which new ones
             // should fill before VMA takes another block.
