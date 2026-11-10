@@ -1062,31 +1062,56 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         if (verify_views && pipeline->DeltaMismatch()) {
             ++fast_draw_stats.view_mismatches;
         }
-        // Draws into very large targets (Ocarina of Time's 16384x16384 shadow target: one pass a
-        // frame, two draws, ~30 ms of GPU on an Adreno 840): what part of the target do they
-        // cover? A pass whose render area is the whole target loads and stores all of it.
+        // What the expensive draws are: draws into very large targets, and draws of 30,000 or
+        // more vertices (Ocarina of Time's field: two 49,026-vertex draws of one pipeline take
+        // ~45 ms of a ~90 ms GPU frame on an Adreno 840). Once a second per vertex shader.
         if (VideoCommon::Nx2Profile::Enabled()) {
-            const Framebuffer* const large = texture_cache.GetFramebuffer();
-            const VkExtent2D area = large->RenderArea();
-            if (u64{area.width} * area.height >= 64'000'000) {
-                static std::atomic<u64> next_log{};
+            const Framebuffer* const target = texture_cache.GetFramebuffer();
+            const VkExtent2D area = target->RenderArea();
+            const auto& draw_state = maxwell3d->draw_manager.draw_state;
+            const u32 vertices =
+                is_indexed ? draw_state.index_buffer.count : draw_state.vertex_buffer.count;
+            if (u64{area.width} * area.height >= 64'000'000 || vertices >= 30'000) {
+                static std::mutex mutex;
+                static std::unordered_map<u64, u64> next_log;
                 const u64 now = VideoCommon::Nx2Profile::Now();
-                u64 due = next_log.load(std::memory_order_relaxed);
-                if (now >= due && next_log.compare_exchange_strong(due, now + 250'000'000ULL)) {
+                const u64 key = pipeline->ShaderHashes()[1];
+                bool due = false;
+                {
+                    std::scoped_lock lock{mutex};
+                    u64& next = next_log[key];
+                    if (now >= next && next_log.size() < 4096) {
+                        next = now + 1'000'000'000ULL;
+                        due = true;
+                    }
+                }
+                if (due) {
                     const auto& regs = maxwell3d->regs;
                     const auto& vp = regs.viewport_transform[0];
                     const auto& sc = regs.scissor_test[0];
+                    const auto& hashes = pipeline->ShaderHashes();
                     LOG_INFO(Render_Vulkan,
-                             "Large target draw: area {}x{} clip {}x{} viewport scale=({},{}) "
-                             "translate=({},{}) scissor en={} x={}..{} y={}..{} zeta={} rts={} "
-                             "color_mask0={:#x} shaders {:016x}/{:016x}",
-                             area.width, area.height, regs.surface_clip.width.Value(),
-                             regs.surface_clip.height.Value(), vp.scale_x, vp.scale_y,
-                             vp.translate_x, vp.translate_y, sc.enable, sc.min_x.Value(),
-                             sc.max_x.Value(), sc.min_y.Value(), sc.max_y.Value(),
-                             regs.zeta_enable, regs.rt_control.count.Value(),
-                             regs.color_mask[0].raw, pipeline->ShaderHashes()[1],
-                             pipeline->ShaderHashes()[5]);
+                             "Heavy draw: {} vertices indexed={} indirect={} topology={} | "
+                             "area {}x{} clip {}x{} viewport scale=({},{}) translate=({},{}) "
+                             "scissor en={} x={}..{} y={}..{} | rts={} rt0 {}x{} format={} "
+                             "zeta={} {}x{} format={} samples={} | depth test={} func={} "
+                             "write={} stencil={} blend0={} cull={} alpha_test={} "
+                             "color_mask0={:#x} | shaders {:016x}/{:016x}/{:016x}/{:016x}/{:016x}",
+                             vertices, is_indexed, is_indirect,
+                             static_cast<u32>(draw_state.topology), area.width, area.height,
+                             regs.surface_clip.width.Value(), regs.surface_clip.height.Value(),
+                             vp.scale_x, vp.scale_y, vp.translate_x, vp.translate_y, sc.enable,
+                             sc.min_x.Value(), sc.max_x.Value(), sc.min_y.Value(),
+                             sc.max_y.Value(), regs.rt_control.count.Value(), regs.rt[0].width,
+                             regs.rt[0].height, static_cast<u32>(regs.rt[0].format),
+                             regs.zeta_enable, regs.zeta_size.width, regs.zeta_size.height,
+                             static_cast<u32>(regs.zeta.format),
+                             static_cast<u32>(regs.anti_alias_samples_mode),
+                             regs.depth_test_enable, static_cast<u32>(regs.depth_test_func),
+                             regs.depth_write_enabled, regs.stencil_enable, regs.blend.enable[0],
+                             regs.gl_cull_test_enabled, regs.alpha_test_enabled,
+                             regs.color_mask[0].raw, hashes[1], hashes[2], hashes[3], hashes[4],
+                             hashes[5]);
                 }
             }
         }
