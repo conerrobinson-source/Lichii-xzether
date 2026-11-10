@@ -750,8 +750,8 @@ private:
     /// the native MME's DMA reads never touched those pages. Without them a fence costs ~1 us
     /// instead of ~5 and draw setup ~7% less. Titles whose guest side reads GPU-written buffer
     /// data through a path the buffer cache does not see still need them (moceure/eden-nx2-android
-    /// a5c06ea209): Pokemon Pokopia's sky is black without, and on Android each of its writes
-    /// next to that data downloaded a page and waited for the GPU (750 times a second).
+    /// a5c06ea209). Pokemon Pokopia no longer does: the Preflushable marks copy back the ranges
+    /// it reads, and copying everything back ran an 8 GB phone out of memory and slowed it down.
     /// EDEN_NX2_BUFFER_DOWNLOADS=0/1 forces it.
     bool AsyncBufferDownloads() const {
         static const int forced = [] {
@@ -761,11 +761,9 @@ private:
         if (forced >= 0) {
             return forced == 1;
         }
-        static constexpr u64 PokemonPokopia = 0x0400A3A01EE4C000ULL;
         static constexpr u64 Pragmata = 0x0400C76024710000ULL;
         const u64 program_id = Settings::GetCurrentProgramID();
-        if (gpu_memory == nullptr || !gpu_memory->UsesNativeTiling() ||
-            program_id == PokemonPokopia || program_id == Pragmata) {
+        if (gpu_memory == nullptr || !gpu_memory->UsesNativeTiling() || program_id == Pragmata) {
             return true;
         }
         // Other Switch 2 titles skip these downloads because the guest CPU's first read of a
@@ -773,10 +771,11 @@ private:
         // flushing, by the read protection of every cached page. Read traps are off under NCE
         // (ReadTrapsEnabled), so on NCE without reactive flushing nothing copied GPU-written
         // buffers back, and the CPU read stale data where the GPU's results should have been:
-        // a black picture on NCE only, as Pokopia's sky was before it was listed above.
-        // Ocarina of Time keeps its own handling (preflush marks, see GetFlushArea).
+        // a black picture on NCE only. Ocarina of Time keeps its own handling (preflush marks,
+        // see GetFlushArea); Pokemon Pokopia no longer copies at fences at all (upstream).
         static constexpr u64 OcarinaOfTime = 0x0400486024DEC000ULL;
-        return program_id != OcarinaOfTime &&
+        static constexpr u64 PokemonPokopia = 0x0400A3A01EE4C000ULL;
+        return program_id != OcarinaOfTime && program_id != PokemonPokopia &&
                Settings::values.cpu_backend.GetValue() == Settings::CpuBackend::Nce &&
                !Settings::values.use_reactive_flushing.GetValue();
     }
