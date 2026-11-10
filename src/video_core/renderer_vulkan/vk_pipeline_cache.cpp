@@ -390,6 +390,48 @@ vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& p
     // Ocarina of Time's field costs ~45 ms a frame on an Adreno 840 in its fragment shader.
     if (code.size() >= 6000 && VideoCommon::Nx2Profile::Enabled()) {
         const Shader::Info& info = program.info;
+        // Accesses the storage buffer pass could not bind: each searches every storage buffer
+        // for its address at run time (64-bit compares), once per vertex or pixel.
+        u32 global_loads = 0;
+        u32 global_wide_loads = 0;
+        u32 global_writes = 0;
+        u32 instructions = 0;
+        for (const Shader::IR::Block* const block : program.blocks) {
+            for (const Shader::IR::Inst& inst : block->Instructions()) {
+                ++instructions;
+                switch (inst.GetOpcode()) {
+                case Shader::IR::Opcode::LoadGlobalU8:
+                case Shader::IR::Opcode::LoadGlobalS8:
+                case Shader::IR::Opcode::LoadGlobalU16:
+                case Shader::IR::Opcode::LoadGlobalS16:
+                case Shader::IR::Opcode::LoadGlobal32:
+                    ++global_loads;
+                    break;
+                case Shader::IR::Opcode::LoadGlobal64:
+                case Shader::IR::Opcode::LoadGlobal128:
+                    ++global_wide_loads;
+                    break;
+                case Shader::IR::Opcode::WriteGlobalU8:
+                case Shader::IR::Opcode::WriteGlobalS8:
+                case Shader::IR::Opcode::WriteGlobalU16:
+                case Shader::IR::Opcode::WriteGlobalS16:
+                case Shader::IR::Opcode::WriteGlobal32:
+                case Shader::IR::Opcode::WriteGlobal64:
+                case Shader::IR::Opcode::WriteGlobal128:
+                    ++global_writes;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        LOG_INFO(Render_Vulkan,
+                 "Large shader {:016x} stage {}: {} IR instructions in {} blocks, unbound global "
+                 "accesses: {} loads, {} wide loads, {} writes; native_global_bounds={} "
+                 "descriptor_aliasing={}",
+                 shader_hash, stage_index, instructions, program.blocks.size(), global_loads,
+                 global_wide_loads, global_writes, info.native_global_bounds,
+                 profile.support_descriptor_aliasing);
         LOG_INFO(Render_Vulkan,
                  "Large shader {:016x} stage {}: {} SPIR-V words, {} textures, {} texture "
                  "buffers, {} images, {} uniform buffers, {} storage buffers | global_memory={} "

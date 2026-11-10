@@ -30,9 +30,11 @@ DeviceMemory::DeviceMemory()
 #ifdef _WIN32
     zero_trim_thread = std::jthread{[this](std::stop_token stop) { TrimZeroPages(stop); }};
 #elif defined(__ANDROID__)
-    // EDEN_NX2_GUEST_MEMORY_CENSUS=0 turns it off.
+    // EDEN_NX2_GUEST_MEMORY_CENSUS=1 turns it on. Off by default: on an S26 Ultra Ocarina of
+    // Time had 2.2 GiB of guest pages resident and only ~90 MiB of them all-zero, so there is
+    // nothing to trim, and reading the pages keeps them mapped twice.
     if (const char* value = std::getenv("EDEN_NX2_GUEST_MEMORY_CENSUS");
-        value == nullptr || value[0] != '0') {
+        value != nullptr && value[0] == '1') {
         zero_trim_thread = std::jthread{[this](std::stop_token stop) { CensusZeroPages(stop); }};
     }
 #endif
