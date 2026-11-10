@@ -6,8 +6,10 @@
 
 #pragma once
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
 #include <thread>
+
+#include "common/polyfill_thread.h"
 #endif
 
 #include "common/host_memory.h"
@@ -71,9 +73,10 @@ public:
 
     Common::HostMemory buffer;
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
 private:
     void TrimZeroPages(std::stop_token stop);
+    void CensusZeroPages(std::stop_token stop);
 
     std::jthread zero_trim_thread;
 #endif

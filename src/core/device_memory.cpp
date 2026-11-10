@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <mutex>
 
 #include "common/logging.h"
+#include "common/polyfill_thread.h"
 #include "common/thread.h"
 #endif
 
@@ -27,8 +29,42 @@ DeviceMemory::DeviceMemory()
              VirtualReserveSize} {
 #ifdef _WIN32
     zero_trim_thread = std::jthread{[this](std::stop_token stop) { TrimZeroPages(stop); }};
+#elif defined(__ANDROID__)
+    // EDEN_NX2_GUEST_MEMORY_CENSUS=0 turns it off.
+    if (const char* value = std::getenv("EDEN_NX2_GUEST_MEMORY_CENSUS");
+        value == nullptr || value[0] != '0') {
+        zero_trim_thread = std::jthread{[this](std::stop_token stop) { CensusZeroPages(stop); }};
+    }
 #endif
 }
+
+#ifdef __ANDROID__
+// Every 45 s: resident guest memory and how much of it is all zeros (nothing is changed).
+void DeviceMemory::CensusZeroPages(std::stop_token stop) {
+    using namespace std::chrono_literals;
+    Common::SetCurrentThreadName("GuestMemCensus");
+    Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
+    std::mutex mutex;
+    std::condition_variable_any wake;
+    while (true) {
+        {
+            std::unique_lock lock{mutex};
+            wake.wait_for(lock, stop, 45s, [] { return false; });
+        }
+        if (stop.stop_requested()) {
+            return;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        const auto [resident, zero] = buffer.TrimZeroPages();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
+        LOG_INFO(HW_Memory,
+                 "Guest memory census: {} MiB resident, {} MiB of it all-zero pages ({} ms)",
+                 resident >> 20, zero >> 20, ms);
+    }
+}
+#endif
 
 DeviceMemory::~DeviceMemory() = default;
 

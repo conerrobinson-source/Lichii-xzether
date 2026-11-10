@@ -1225,6 +1225,41 @@ std::pair<size_t, size_t> HostMemory::TrimZeroPages() const {
         i = j;
     }
     return {(backing_pages.size() + view_pages.size()) * PageAlignment, zero_bytes};
+#elif defined(__ANDROID__)
+    // A census only (nothing is trimmed): how much guest memory is resident and how much of it
+    // holds only zeros. Ocarina of Time is killed for memory on a 16 GB phone with 4-5 GiB of
+    // guest pages resident; on Windows ~7 GiB of what it leaves resident is zeros.
+    if (backing_base == nullptr || backing_size == 0) {
+        return {0, 0};
+    }
+    constexpr size_t Chunk = size_t{256} << 20;
+    // The kernel's page may be 16 KiB; guest pages are 4 KiB.
+    const size_t host_page = (std::max)(static_cast<size_t>(sysconf(_SC_PAGESIZE)),
+                                        size_t{PageAlignment});
+    std::vector<unsigned char> resident(Chunk / host_page + 1);
+    size_t resident_bytes = 0;
+    size_t zero_bytes = 0;
+    for (size_t offset = 0; offset < backing_size; offset += Chunk) {
+        const size_t length = (std::min)(Chunk, backing_size - offset);
+        if (mincore(backing_base + offset, length, resident.data()) != 0) {
+            continue;
+        }
+        for (size_t page = 0; page * host_page < length; ++page) {
+            if ((resident[page] & 1) == 0) {
+                continue;
+            }
+            const size_t begin = offset + page * host_page;
+            const size_t end = (std::min)(begin + host_page, offset + length);
+            resident_bytes += end - begin;
+            for (size_t guest_page = begin; guest_page + PageAlignment <= end;
+                 guest_page += PageAlignment) {
+                if (IsZeroPage(backing_base + guest_page)) {
+                    zero_bytes += PageAlignment;
+                }
+            }
+        }
+    }
+    return {resident_bytes, zero_bytes};
 #else
     return {0, 0};
 #endif
