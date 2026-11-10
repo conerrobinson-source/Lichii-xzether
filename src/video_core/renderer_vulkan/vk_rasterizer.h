@@ -366,7 +366,14 @@ private:
     };
     std::vector<MeshArena> mesh_arenas;
     size_t mesh_arena_current{~size_t{}};
+#ifdef __ANDROID__
+    // Four 64 MiB arenas were 256 MiB of the 2.9 GiB Ocarina of Time's field allocates on an
+    // S26 Ultra, where the low-memory killer ends the process. They grow when a submission asks
+    // for more (AcquireMeshArena).
+    u64 mesh_arena_size{16ULL << 20};
+#else
     u64 mesh_arena_size{64ULL << 20};
+#endif
     /// The current submission's arena, after its counter is reset.
     const MeshArena& AcquireMeshArena();
 

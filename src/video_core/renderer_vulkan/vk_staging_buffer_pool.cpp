@@ -43,6 +43,9 @@ constexpr VkDeviceSize MAX_ALIGNMENT = 256;
 // - GT 1030 on ^NIX will OOM with 256mib
 #if defined(__FreeBSD__)
 constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 128_MiB;
+#elif defined(__ANDROID__)
+// Device memory is the phone's RAM: larger requests take a staging buffer, freed when idle.
+constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 64_MiB;
 #else
 // 128 MiB on Windows too: 256 MiB sat mostly unused in device memory on Switch 2 titles.
 constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 128_MiB;
