@@ -1030,14 +1030,21 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     // then in buffer i when base_i <= address and address - base_i < span_i. Buffers with equal
     // bases both match, and the first one answers, as before. EDEN_NX2_GLOBAL_BASES=0 keeps the
     // old search.
-    static const bool hoist_enabled = [] {
+    //
+    // Vertex stages only: with it in fragment shaders (72 accesses too) PurpleVK 26.2.99 on an
+    // Adreno 840 failed every such pipeline with VK_ERROR_OUT_OF_HOST_MEMORY and the process
+    // died with SIGSEGV soon after (28 more 32-bit values live across the whole shader is the
+    // suspect, not confirmed). EDEN_NX2_GLOBAL_BASES=2 tries every stage but compute.
+    static const int hoist_mode = [] {
         const char* value = std::getenv("EDEN_NX2_GLOBAL_BASES");
-        return value == nullptr || value[0] != '0';
+        return value == nullptr ? 1 : std::atoi(value);
     }();
+    const bool hoist_stage{hoist_mode == 2 ? stage != Stage::Compute
+                                           : hoist_mode == 1 && (stage == Stage::VertexA ||
+                                                                 stage == Stage::VertexB)};
     const size_t num_global_buffers{info.storage_buffers_descriptors.size()};
     const bool hoist_bases{
-        hoist_enabled && info.native_global_bounds && stage != Stage::Compute &&
-        num_global_buffers != 0 &&
+        hoist_stage && info.native_global_bounds && num_global_buffers != 0 &&
         std::ranges::none_of(info.storage_buffers_descriptors,
                              [](const auto& descriptor) { return descriptor.is_written; })};
     std::vector<Id> base_vars(num_global_buffers);
