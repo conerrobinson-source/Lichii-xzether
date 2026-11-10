@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <cstdlib>
 #include <random>
 #include "common/scope_exit.h"
 #include "common/settings.h"
@@ -860,6 +862,22 @@ size_t KProcess::GetUsedUserPhysicalMemorySize(KernelCore& kernel) const {
     return norm_size + other_size + sec_size;
 }
 
+namespace {
+// EDEN_NX2_APP_MEMORY_MIB=<n>: the total memory a Switch 2 application is told it has, at most.
+// Ocarina of Time sizes its heap from it (9.5 GiB total, a 6.9 GiB heap) and fills ~7 GiB, more
+// than a 12 GB phone has left. Experiment, not for nx2: a title may need what it is denied.
+size_t CapReportedTotal(size_t total, size_t used) {
+    static const size_t cap = [] {
+        const char* value = std::getenv("EDEN_NX2_APP_MEMORY_MIB");
+        return value != nullptr ? size_t{std::strtoull(value, nullptr, 10)} << 20 : size_t{0};
+    }();
+    if (cap == 0 || total <= cap) {
+        return total;
+    }
+    return (std::max)(cap, used);
+}
+} // Anonymous namespace
+
 size_t KProcess::GetTotalUserPhysicalMemorySize(KernelCore& kernel) const {
     // Get the amount of free and used size.
     const size_t free_size =
@@ -876,10 +894,11 @@ size_t KProcess::GetTotalUserPhysicalMemorySize(KernelCore& kernel) const {
 
     // NOTE: These function calls will recalculate, introducing a race...it is unclear why Nintendo
     // does it this way.
+    const size_t used = this->GetUsedUserPhysicalMemorySize(kernel);
     if (used_size + free_size > max_size) {
-        return max_size;
+        return m_is_switch2 ? CapReportedTotal(max_size, used) : max_size;
     } else {
-        return free_size + this->GetUsedUserPhysicalMemorySize(kernel);
+        return m_is_switch2 ? CapReportedTotal(free_size + used, used) : free_size + used;
     }
 }
 
@@ -906,11 +925,11 @@ size_t KProcess::GetTotalNonSystemUserPhysicalMemorySize(KernelCore& kernel) con
 
     // NOTE: These function calls will recalculate, introducing a race...it is unclear why Nintendo
     // does it this way.
-    if (used_size + free_size > max_size) {
-        return max_size - this->GetRequiredSecureMemorySizeNonDefault();
-    } else {
-        return free_size + this->GetUsedNonSystemUserPhysicalMemorySize(kernel);
-    }
+    const size_t used = this->GetUsedNonSystemUserPhysicalMemorySize(kernel);
+    const size_t total = used_size + free_size > max_size
+                             ? max_size - this->GetRequiredSecureMemorySizeNonDefault()
+                             : free_size + used;
+    return m_is_switch2 ? CapReportedTotal(total, used) : total;
 }
 
 Result KProcess::Run(KernelCore& kernel, s32 priority, size_t stack_size) {
