@@ -170,8 +170,12 @@ void Traverse(EmitContext& ctx, IR::Program& program) {
             if (current_block) {
                 ctx.OpBranch(label);
             }
+            const bool first_block{current_block == nullptr};
             current_block = node.data.block;
             ctx.AddLabel(label);
+            if (first_block && ctx.init_global_bases_func.value != 0) {
+                ctx.OpFunctionCall(ctx.void_id, ctx.init_global_bases_func);
+            }
             for (IR::Inst& inst : node.data.block->Instructions()) {
                 EmitInst(ctx, &inst);
             }

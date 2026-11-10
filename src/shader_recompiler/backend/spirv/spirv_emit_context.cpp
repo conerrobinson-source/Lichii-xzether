@@ -8,6 +8,8 @@
 #include <array>
 #include <bit>
 #include <climits>
+#include <cstdlib>
+#include <vector>
 
 #include <boost/container/static_vector.hpp>
 
@@ -974,43 +976,112 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
     }
     using DefPtr = Id StorageDefinitions::*;
     const Id zero{u32_zero_value};
+    const u64 ssbo_align_mask{~(profile.min_ssbo_alignment - 1U)};
+    const auto base_address_of{[&](size_t index) {
+        const auto& ssbo{info.storage_buffers_descriptors[index]};
+        const Id words{EmitGetCbufU32x2(*this, IR::Value{ssbo.cbuf_index},
+                                       IR::Value{ssbo.cbuf_offset})};
+        if (ssbo.indirect_offset == ~0U) {
+            return OpBitwiseAnd(U64, OpBitcast(U64, words), Constant(U64, ssbo_align_mask));
+        }
+        // The pointer is read through the buffer bound for the constant buffer pointer.
+        const auto holder{std::ranges::find_if(
+            info.storage_buffers_descriptors, [&ssbo](const auto& desc) {
+                return desc.cbuf_index == ssbo.cbuf_index &&
+                       desc.cbuf_offset == ssbo.cbuf_offset && desc.indirect_offset == ~0U;
+            })};
+        if (holder == info.storage_buffers_descriptors.end()) {
+            return Constant(U64, ~u64{0});
+        }
+        const size_t holder_index{static_cast<size_t>(
+            std::distance(info.storage_buffers_descriptors.begin(), holder))};
+        const Id holder_low{OpCompositeExtract(U32[1], words, 0U)};
+        const Id byte{OpIAdd(U32[1],
+                             OpBitwiseAnd(U32[1], holder_low,
+                                          Const(static_cast<u32>(profile.min_ssbo_alignment - 1))),
+                             Const(ssbo.indirect_offset))};
+        const Id word_index{OpShiftRightLogical(U32[1], byte, Const(2U))};
+        const Id storage{ssbos[holder_index].U32};
+        const auto load_word{[&](Id word) {
+            return OpLoad(U32[1], OpAccessChain(storage_types.U32.element, storage, zero, word));
+        }};
+        const Id pointer_words{OpCompositeConstruct(
+            U32[2], load_word(word_index), load_word(OpIAdd(U32[1], word_index, Const(1U))))};
+        return OpBitwiseAnd(U64, OpBitcast(U64, pointer_words), Constant(U64, ssbo_align_mask));
+    }};
+    // Whether base_address_of(index) is the "no such buffer" constant.
+    const auto base_missing{[&](size_t index) {
+        const auto& ssbo{info.storage_buffers_descriptors[index]};
+        if (ssbo.indirect_offset == ~0U) {
+            return false;
+        }
+        return std::ranges::none_of(info.storage_buffers_descriptors, [&ssbo](const auto& desc) {
+            return desc.cbuf_index == ssbo.cbuf_index && desc.cbuf_offset == ssbo.cbuf_offset &&
+                   desc.indirect_offset == ~0U;
+        });
+    }};
+    // Native bounds find an address's buffer as the one with the closest base at or below it.
+    // Emitted per access that was a pass over every buffer: its base (uniform and pointer
+    // loads), a 64-bit distance, two compares and two selects each. Ocarina of Time's field
+    // geometry runs a vertex shader with 72 such accesses over 7 buffers for 49,026 vertices
+    // twice a frame: ~55 ms of GPU a frame on an Adreno 840. The bases cannot change while a
+    // shader that writes no storage buffer runs, so they are found once, at the start of main,
+    // together with each buffer's span (the distance to the next base above it); an access is
+    // then in buffer i when base_i <= address and address - base_i < span_i. Buffers with equal
+    // bases both match, and the first one answers, as before. EDEN_NX2_GLOBAL_BASES=0 keeps the
+    // old search.
+    static const bool hoist_enabled = [] {
+        const char* value = std::getenv("EDEN_NX2_GLOBAL_BASES");
+        return value == nullptr || value[0] != '0';
+    }();
+    const size_t num_global_buffers{info.storage_buffers_descriptors.size()};
+    const bool hoist_bases{
+        hoist_enabled && info.native_global_bounds && stage != Stage::Compute &&
+        num_global_buffers != 0 &&
+        std::ranges::none_of(info.storage_buffers_descriptors,
+                             [](const auto& descriptor) { return descriptor.is_written; })};
+    std::vector<Id> base_vars(num_global_buffers);
+    std::vector<Id> span_vars(num_global_buffers);
+    if (hoist_bases) {
+        const Id pointer{TypePointer(spv::StorageClass::Private, U64)};
+        for (size_t index = 0; index < num_global_buffers; ++index) {
+            base_vars[index] = AddGlobalVariable(pointer, spv::StorageClass::Private);
+            span_vars[index] = AddGlobalVariable(pointer, spv::StorageClass::Private);
+            if (profile.supported_spirv >= 0x00010400) {
+                interfaces.push_back(base_vars[index]);
+                interfaces.push_back(span_vars[index]);
+            }
+        }
+        init_global_bases_func = OpFunction(void_id, spv::FunctionControlMask::MaskNone,
+                                            TypeFunction(void_id));
+        AddLabel();
+        std::vector<Id> bases(num_global_buffers);
+        for (size_t index = 0; index < num_global_buffers; ++index) {
+            bases[index] = base_address_of(index);
+        }
+        for (size_t index = 0; index < num_global_buffers; ++index) {
+            const bool missing{base_missing(index)};
+            Id span{Constant(U64, missing ? u64{0} : ~u64{0})};
+            for (size_t other = 0; !missing && other < num_global_buffers; ++other) {
+                if (other == index || base_missing(other)) {
+                    continue;
+                }
+                const Id distance{OpISub(U64, bases[other], bases[index])};
+                const Id closer{OpLogicalAnd(U1, OpUGreaterThan(U1, bases[other], bases[index]),
+                                             OpULessThan(U1, distance, span))};
+                span = OpSelect(U64, closer, distance, span);
+            }
+            OpStore(base_vars[index], bases[index]);
+            OpStore(span_vars[index], span);
+        }
+        OpReturn();
+        OpFunctionEnd();
+    }
     const auto define_body{[&](DefPtr ssbo_member, Id addr, Id element_pointer, u32 shift,
                                auto&& callback) {
         AddLabel();
         const size_t num_buffers{info.storage_buffers_descriptors.size()};
-        const u64 ssbo_align_mask{~(profile.min_ssbo_alignment - 1U)};
-        const auto base_address{[&](size_t index) {
-            const auto& ssbo{info.storage_buffers_descriptors[index]};
-            const Id words{EmitGetCbufU32x2(*this, IR::Value{ssbo.cbuf_index},
-                                           IR::Value{ssbo.cbuf_offset})};
-            if (ssbo.indirect_offset == ~0U) {
-                return OpBitwiseAnd(U64, OpBitcast(U64, words), Constant(U64, ssbo_align_mask));
-            }
-            // The pointer is read through the buffer bound for the constant buffer pointer.
-            const auto holder{std::ranges::find_if(
-                info.storage_buffers_descriptors, [&ssbo](const auto& desc) {
-                    return desc.cbuf_index == ssbo.cbuf_index &&
-                           desc.cbuf_offset == ssbo.cbuf_offset && desc.indirect_offset == ~0U;
-                })};
-            if (holder == info.storage_buffers_descriptors.end()) {
-                return Constant(U64, ~u64{0});
-            }
-            const size_t holder_index{static_cast<size_t>(
-                std::distance(info.storage_buffers_descriptors.begin(), holder))};
-            const Id holder_low{OpCompositeExtract(U32[1], words, 0U)};
-            const Id byte{OpIAdd(U32[1],
-                                 OpBitwiseAnd(U32[1], holder_low,
-                                              Const(static_cast<u32>(profile.min_ssbo_alignment - 1))),
-                                 Const(ssbo.indirect_offset))};
-            const Id word_index{OpShiftRightLogical(U32[1], byte, Const(2U))};
-            const Id storage{ssbos[holder_index].U32};
-            const auto load_word{[&](Id word) {
-                return OpLoad(U32[1], OpAccessChain(storage_types.U32.element, storage, zero, word));
-            }};
-            const Id pointer_words{OpCompositeConstruct(
-                U32[2], load_word(word_index), load_word(OpIAdd(U32[1], word_index, Const(1U))))};
-            return OpBitwiseAnd(U64, OpBitcast(U64, pointer_words), Constant(U64, ssbo_align_mask));
-        }};
+        const auto base_address{[&](size_t index) { return base_address_of(index); }};
         const auto access{[&](size_t index, Id ssbo_addr, Id cond) {
             const Id then_label{OpLabel()};
             const Id else_label{OpLabel()};
@@ -1024,6 +1095,16 @@ void EmitContext::DefineGlobalMemoryFunctions(const IR::Program& program) {
             callback(ssbo_pointer, ssbo_id, ssbo_index);
             AddLabel(else_label);
         }};
+        if (info.native_global_bounds && hoist_bases) {
+            for (size_t index = 0; index < num_buffers; ++index) {
+                const Id base{OpLoad(U64, base_vars[index])};
+                const Id span{OpLoad(U64, span_vars[index])};
+                const Id inside{OpLogicalAnd(U1, OpUGreaterThanEqual(U1, addr, base),
+                                             OpULessThan(U1, OpISub(U64, addr, base), span))};
+                access(index, base, inside);
+            }
+            return;
+        }
         if (info.native_global_bounds) {
             // Native pointers carry no NVN size word. The address belongs to the candidate buffer
             // whose base is the closest one at or below it (bounds come from the binding).
