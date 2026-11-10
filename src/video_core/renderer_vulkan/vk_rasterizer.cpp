@@ -1062,6 +1062,34 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
         if (verify_views && pipeline->DeltaMismatch()) {
             ++fast_draw_stats.view_mismatches;
         }
+        // Draws into very large targets (Ocarina of Time's 16384x16384 shadow target: one pass a
+        // frame, two draws, ~30 ms of GPU on an Adreno 840): what part of the target do they
+        // cover? A pass whose render area is the whole target loads and stores all of it.
+        if (VideoCommon::Nx2Profile::Enabled()) {
+            const Framebuffer* const large = texture_cache.GetFramebuffer();
+            const VkExtent2D area = large->RenderArea();
+            if (u64{area.width} * area.height >= 64'000'000) {
+                static std::atomic<u64> next_log{};
+                const u64 now = VideoCommon::Nx2Profile::Now();
+                u64 due = next_log.load(std::memory_order_relaxed);
+                if (now >= due && next_log.compare_exchange_strong(due, now + 250'000'000ULL)) {
+                    const auto& regs = maxwell3d->regs;
+                    const auto& vp = regs.viewport_transform[0];
+                    const auto& sc = regs.scissor_test[0];
+                    LOG_INFO(Render_Vulkan,
+                             "Large target draw: area {}x{} clip {}x{} viewport scale=({},{}) "
+                             "translate=({},{}) scissor en={} x={}..{} y={}..{} zeta={} rts={} "
+                             "color_mask0={:#x} shaders {:016x}/{:016x}",
+                             area.width, area.height, regs.surface_clip.width.Value(),
+                             regs.surface_clip.height.Value(), vp.scale_x, vp.scale_y,
+                             vp.translate_x, vp.translate_y, sc.enable, sc.min_x.Value(),
+                             sc.max_x.Value(), sc.min_y.Value(), sc.max_y.Value(),
+                             regs.zeta_enable, regs.rt_control.count.Value(),
+                             regs.color_mask[0].raw, pipeline->ShaderHashes()[1],
+                             pipeline->ShaderHashes()[5]);
+                }
+            }
+        }
         if (verify_views &&
             kept_bindings != buffer_cache.KeptGraphicsBindingsHash(false, false, true)) {
             ++fast_draw_stats.binding_mismatches;
