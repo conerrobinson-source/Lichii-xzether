@@ -386,6 +386,24 @@ vk::ShaderModule EmitShaderModule(const Device& device, const Shader::Profile& p
     const auto code =
         EmitPipelineShader(profile, runtime_info, program, binding, shader_hash, reference);
     device.SaveShader(code);
+    // Large shaders, with what they bind and use (EDEN_NX2_GPU_PROFILE): a 1080p draw pair of
+    // Ocarina of Time's field costs ~45 ms a frame on an Adreno 840 in its fragment shader.
+    if (code.size() >= 6000 && VideoCommon::Nx2Profile::Enabled()) {
+        const Shader::Info& info = program.info;
+        LOG_INFO(Render_Vulkan,
+                 "Large shader {:016x} stage {}: {} SPIR-V words, {} textures, {} texture "
+                 "buffers, {} images, {} uniform buffers, {} storage buffers | global_memory={} "
+                 "local_memory={} int64={} fp64={} int8={} int16={} derivatives={} demote={} "
+                 "typeless_reads={} cbuf_indirect={} sparse={}",
+                 shader_hash, stage_index, code.size(), info.texture_descriptors.size(),
+                 info.texture_buffer_descriptors.size(), info.image_descriptors.size(),
+                 info.constant_buffer_descriptors.size(),
+                 info.storage_buffers_descriptors.size(), info.uses_global_memory,
+                 info.uses_local_memory, info.uses_int64, info.uses_fp64, info.uses_int8,
+                 info.uses_int16, info.uses_derivatives, info.uses_demote_to_helper_invocation,
+                 info.uses_typeless_image_reads, info.uses_cbuf_indirect,
+                 info.uses_sparse_residency);
+    }
     vk::ShaderModule module{BuildShader(device, code)};
 
     // Text log + .spv dump. Text log is gated by gpu_log_level != Off; .spv dump

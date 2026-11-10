@@ -117,6 +117,11 @@ public:
     static std::chrono::nanoseconds TakeHoldTime() noexcept;
 
     bool HasDynamicVertexInput() const noexcept { return key.state.dynamic_vertex_input; }
+    /// What a stage binds and uses (0 = vertex ... 4 = fragment).
+    const Shader::Info& StageInfo(size_t stage) const noexcept {
+        return stage_infos[stage];
+    }
+
     const std::array<u64, 6>& ShaderHashes() const noexcept {
         return key.unique_hashes;
     }

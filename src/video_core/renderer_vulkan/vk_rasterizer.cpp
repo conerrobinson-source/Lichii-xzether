@@ -1112,6 +1112,25 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func, bool is_in
                              regs.gl_cull_test_enabled, regs.alpha_test_enabled,
                              regs.color_mask[0].raw, hashes[1], hashes[2], hashes[3], hashes[4],
                              hashes[5]);
+                    const Shader::Info& fs = pipeline->StageInfo(4);
+                    const Shader::Info& vs = pipeline->StageInfo(0);
+                    LOG_INFO(Render_Vulkan,
+                             "Heavy draw fragment {:016x}: {} textures, {} texture buffers, {} "
+                             "images, {} uniform buffers, {} storage buffers | global_memory={} "
+                             "local_memory={} int64={} fp64={} derivatives={} demote={} "
+                             "typeless_reads={} cbuf_indirect={} | vertex {:016x}: {} textures, "
+                             "{} uniform buffers, {} storage buffers, global_memory={} int64={}",
+                             hashes[5], fs.texture_descriptors.size(),
+                             fs.texture_buffer_descriptors.size(), fs.image_descriptors.size(),
+                             fs.constant_buffer_descriptors.size(),
+                             fs.storage_buffers_descriptors.size(), fs.uses_global_memory,
+                             fs.uses_local_memory, fs.uses_int64, fs.uses_fp64,
+                             fs.uses_derivatives, fs.uses_demote_to_helper_invocation,
+                             fs.uses_typeless_image_reads, fs.uses_cbuf_indirect, hashes[1],
+                             vs.texture_descriptors.size(),
+                             vs.constant_buffer_descriptors.size(),
+                             vs.storage_buffers_descriptors.size(), vs.uses_global_memory,
+                             vs.uses_int64);
                 }
             }
         }
