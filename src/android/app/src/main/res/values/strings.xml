@@ -464,6 +464,10 @@
     <string name="exefs_folder_choose">Choose which ExeFS to launch</string>
     <string name="exefs_folder_bad_path">Could not resolve the selected folder to a storage path</string>
     <string name="exefs_folder_needs_permission">Grant all files access, then select the folder again</string>
+    <string name="exefs_access_title">Allow all files access</string>
+    <string name="exefs_access_description">A game folder holds loose Switch 2 games (exefs folders). Hokkaido can only list them with all files access.</string>
+    <string name="exefs_access_allow">Allow</string>
+    <string name="exefs_access_not_now">Not now</string>
 
     <!-- Applet launcher strings -->
     <string name="qlaunch_applet">Qlaunch</string>
