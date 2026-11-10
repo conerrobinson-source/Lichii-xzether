@@ -54,6 +54,10 @@ void SetTestBuildDefaults() {
         // Ocarina of Time (Fritchii #641 ports): let its multi-core threads use idle cores, and
         // sleep 500 us in the resource thread's busy rescan. KEY=0 in env.txt turns either off;
         // EDEN_NX2_OOT_POLL_BACKOFF_US=<us> changes the sleep (0 = none).
+        // Every 2 s: what the texture cache, staging buffers, buffer cache and VMA hold. Ocarina
+        // of Time is killed for memory on a 16 GB phone; this says where the 3 GiB of device
+        // memory is.
+        {"EDEN_NX2_MEM_TRACE", "1"},
         {"EDEN_NX2_OOT_WIDE_AFFINITY", "1"},
         {"EDEN_NX2_OOT_POLL_BACKOFF", "1"},
     };
